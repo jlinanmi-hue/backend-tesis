@@ -25,8 +25,6 @@ class DetallePedidoProductosResource extends JsonResource
             'cantidad' => (float) $this->Detalle_Pedido_Productos_cantidad,
             'cantidad_base' => (float) ($this->Detalle_Pedido_Productos_cantidad_base ?? ($this->Detalle_Pedido_Productos_cantidad * ($this->Detalle_Pedido_Productos_factor_conversion ?? 1.0))),
             'cantidad_fisica' => (float) ($this->Detalle_Pedido_Productos_cantidad_fisica ?? $this->Detalle_Pedido_Productos_cantidad),
-            'cantidad_virtual' => 0.0,
-            'es_virtual' => false,
             'precio_unitario' => (float) $this->Detalle_Pedido_Productos_precio_unitario_venta,
             'subtotal' => (float) $this->Detalle_Pedido_Productos_subtotal,
         ];

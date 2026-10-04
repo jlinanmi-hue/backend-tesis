@@ -107,9 +107,6 @@ class InventarioService
             $p->precio_venta_base = (float) ($detalleBase?->Detalle_Producto_medida_precio_venta ?? 0);
             $p->precio_compra_base_formateado = 'S/ ' . number_format($p->precio_compra_base, 2);
             $p->precio_venta_base_formateado = 'S/ ' . number_format($p->precio_venta_base, 2);
-            $p->stock_virtual_limite = 0.0;
-            $p->stock_virtual_consumido = 0.0;
-            $p->stock_virtual_disponible = 0.0;
             $p->stock_total_vendible = (float) ($p->ProductoStockActual ?? 0);
 
             return $p;

@@ -477,14 +477,10 @@ class ProductoController extends Controller
                         'ProductoMarca' => $p->ProductoMarca ?? 'Genérico',
                         'categoria_nombre' => $p->categoria->Categoria_ProductoDescripcion_categoria ?? 'Sin Categoría',
                         'ProductoStockActual' => (float) $p->ProductoStockActual,
-                        'ProductoStockVirtual' => 0.0,
-                        'ProductoStockVirtualConsumido' => 0.0,
-                        'stock_virtual_disponible' => 0.0,
                         'stock_total_vendible' => (float) $p->ProductoStockActual,
                         'unidad_base' => $abrevBase,
                         'unidad_base_nombre' => $nombreBase,
                         'stock_actual_texto' => number_format((float) $p->ProductoStockActual, 0) . ' ' . $abrevBase,
-                        'stock_virtual_texto' => '0 ' . $abrevBase,
                         'unidades' => $unidades,
                     ];
                 });

@@ -1469,10 +1469,8 @@ class GeminiToolsService
                 'unidad_descripcion'        => $resMedida['unidad_descripcion'],
                 'factor_conversion'         => $factor,
                 'stock_fisico'              => $stockFisico,
-                'stock_virtual_disponible'  => 0.0,
                 'stock_total'               => $stockTotal,
                 'cantidad_fisica_estimada'  => $cantFisica,
-                'cantidad_virtual_estimada' => 0.0,
                 'precio_unitario'           => $precioUnitario,
                 'cantidad'                  => $cant,
                 'subtotal'                  => $subtotal,
@@ -3746,7 +3744,6 @@ class GeminiToolsService
                 'stock_actual'  => $stockActual,
                 'stock_minimo'  => $stockMinimo,
                 'precio_venta'  => $precioVenta,
-                'stock_virtual' => 0.0,
                 'estado_stock'  => $stockActual <= 0 ? 'Agotado' : ($stockActual <= $stockMinimo ? 'Bajo Stock' : 'Normal'),
             ];
         }

@@ -899,9 +899,6 @@ class DashboardService
                 'ProductoNombre',
                 'ProductoStockActual',
                 'ProductoStockMinimo',
-                DB::raw('0.00 as ProductoStockVirtual'),
-                DB::raw('0.00 as ProductoStockVirtualConsumido'),
-                DB::raw('0.00 as stock_virtual_disponible'),
                 DB::raw("COALESCE(ProductoZona, 'Zona A - Principal') as ProductoZona")
             )
             ->where('ProductoEliminado', 'N')
