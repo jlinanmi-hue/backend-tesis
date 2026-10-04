@@ -367,27 +367,8 @@ class OrdenCompraService
                         $cantidadComprada = (float) $detalle->Detalle_Orden_CompraCantidad;
                         $precioUnitario = (float) $detalle->Detalle_Orden_CompraPrecioUnitario;
 
-                        // Verificar si existe consumo de stock virtual pendiente de reposición
-                        $deudaVirtual = (float) ($producto->ProductoStockVirtualConsumido ?? 0);
-
-                        if ($deudaVirtual > 0) {
-                            // Se consume de la nueva entrada lo necesario para cubrir la deuda virtual
-                            $coberturaVirtual = min($cantidadComprada, $deudaVirtual);
-                            $excedenteFisico = max(0.0, round($cantidadComprada - $coberturaVirtual, 2));
-
-                            // Reducir la deuda virtual (dejando el stock virtual intacto)
-                            $producto->update([
-                                'ProductoStockVirtualConsumido' => max(0.0, round($deudaVirtual - $coberturaVirtual, 2))
-                            ]);
-
-                            // El excedente ingresa a stock físico
-                            if ($excedenteFisico > 0) {
-                                $producto->increment('ProductoStockActual', $excedenteFisico);
-                            }
-                        } else {
-                            // Sin deuda virtual: toda la cantidad ingresa a stock físico
-                            $producto->increment('ProductoStockActual', $cantidadComprada);
-                        }
+                        // Toda la cantidad ingresa a stock físico
+                        $producto->increment('ProductoStockActual', $cantidadComprada);
 
                         $nuevoSaldo = (float) $producto->fresh()->ProductoStockActual;
 

@@ -39,8 +39,6 @@ class Producto extends Model
         'ProductoStockActual',
         'ProductoStockMinimo',
         'ProductoStockMaximo',
-        'ProductoStockVirtual',
-        'ProductoStockVirtualConsumido',
         'ProductoEstado',
         'ProductoEliminado',
         'ProductoUsuarioCreacion',
@@ -60,30 +58,25 @@ class Producto extends Model
         'ProductoStockActual' => 'decimal:2',
         'ProductoStockMinimo' => 'decimal:2',
         'ProductoStockMaximo' => 'decimal:2',
-        'ProductoStockVirtual' => 'decimal:2',
-        'ProductoStockVirtualConsumido' => 'decimal:2',
         'ProductoFechaCreacion' => 'datetime',
         'ProductoFechaModificacion' => 'datetime',
         'ProductoFechaEliminacion' => 'datetime',
     ];
 
     /**
-     * Stock virtual disponible para cubrir pedidos (Capacidad - Consumido).
+     * Stock virtual disponible (Obsoleto: mantenido como 0.0 por compatibilidad pasiva).
      */
     public function getStockVirtualDisponibleAttribute(): float
     {
-        $virtual = (float) ($this->ProductoStockVirtual ?? 0);
-        $consumido = (float) ($this->ProductoStockVirtualConsumido ?? 0);
-        return max(0.0, round($virtual - $consumido, 2));
+        return 0.0;
     }
 
     /**
-     * Stock total vendible (Stock Físico + Stock Virtual Disponible).
+     * Stock total vendible (Equivalente al Stock Físico Real disponible).
      */
     public function getStockTotalVendibleAttribute(): float
     {
-        $fisico = max(0.0, (float) ($this->ProductoStockActual ?? 0));
-        return round($fisico + $this->stock_virtual_disponible, 2);
+        return max(0.0, (float) ($this->ProductoStockActual ?? 0));
     }
 
     public function categoria(): BelongsTo

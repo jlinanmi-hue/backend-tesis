@@ -17,7 +17,6 @@ class AuditoriaRoturaStock extends Model
         'pedido_id',
         'cantidad_solicitada',
         'cantidad_disponible_fisica',
-        'cantidad_virtual_usada',
         'deficit_unidades',
         'tipo_rotura',
         'rompe_stock_seguridad',
@@ -29,7 +28,6 @@ class AuditoriaRoturaStock extends Model
     protected $casts = [
         'cantidad_solicitada' => 'decimal:2',
         'cantidad_disponible_fisica' => 'decimal:2',
-        'cantidad_virtual_usada' => 'decimal:2',
         'deficit_unidades' => 'decimal:2',
         'rompe_stock_seguridad' => 'boolean',
         'created_at' => 'datetime',

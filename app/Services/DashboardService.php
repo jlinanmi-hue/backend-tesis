@@ -696,40 +696,24 @@ class DashboardService
                 ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
                 ->count();
 
-            // IRS_amortiguado = Pedidos con quiebre físico que fueron salvados gracias al Stock Virtual
-            $IRS_amortiguado = DB::table('Pedido as p')
-                ->join('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
-                ->where('p.PedidoEliminado', 'N')
-                ->where('d.Detalle_Pedido_Productos_cantidad_virtual', '>', 0)
-                ->whereBetween('p.PedidoFechaCreacion', [$inicio, $fin])
-                ->distinct('p.PedidoId')
-                ->count('p.PedidoId');
-
-            // IRS total = fatales + amortiguados
-            $IRS_total = $IRS_fatal + $IRS_amortiguado;
+            $IRS_amortiguado = 0;
+            $IRS_total = $IRS_fatal;
 
             // Verificar si hay registros explícitos en auditoria_roturas_stock
             $auditFatal = DB::table('auditoria_roturas_stock')
                 ->where('tipo_rotura', 'VENTA_PERDIDA')
                 ->whereBetween('created_at', [$inicio, $fin])
                 ->count();
-            $auditAmort = DB::table('auditoria_roturas_stock')
-                ->where('tipo_rotura', 'AMORTIGUADO')
-                ->whereBetween('created_at', [$inicio, $fin])
-                ->count();
 
-            if ($auditFatal > 0 || $auditAmort > 0) {
+            if ($auditFatal > 0) {
                 $IRS_fatal = max($IRS_fatal, $auditFatal);
-                $IRS_amortiguado = max($IRS_amortiguado, $auditAmort);
-                $IRS_total = $IRS_fatal + $IRS_amortiguado;
+                $IRS_total = $IRS_fatal;
             }
 
             $PRS_total = $TR > 0 ? round(($IRS_total / $TR) * 100, 2) : 0;
-            $PRS_fatal = $TR > 0 ? round(($IRS_fatal / $TR) * 100, 2) : 0;
-            $PRS_amortiguado = $TR > 0 ? round(($IRS_amortiguado / $TR) * 100, 2) : 0;
-
-            // Tasa de Amortiguación = (IRS_amortiguado / IRS_total) × 100
-            $tasaAmortiguacion = $IRS_total > 0 ? round(($IRS_amortiguado / $IRS_total) * 100, 1) : 100.0;
+            $PRS_fatal = $PRS_total;
+            $PRS_amortiguado = 0.0;
+            $tasaAmortiguacion = 0.0;
 
             // Comparativa Semana Anterior
             $weekPrev = Carbon::now()->subWeek()->format('Y-\WW');
@@ -743,14 +727,7 @@ class DashboardService
                 ->where('PedidoMotivoAnulacion', 'FALTA_STOCK')
                 ->whereBetween('PedidoFechaCreacion', [$inicioPrev, $finPrev])
                 ->count();
-            $IRS_amortiguado_prev = DB::table('Pedido as p')
-                ->join('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
-                ->where('p.PedidoEliminado', 'N')
-                ->where('d.Detalle_Pedido_Productos_cantidad_virtual', '>', 0)
-                ->whereBetween('p.PedidoFechaCreacion', [$inicioPrev, $finPrev])
-                ->distinct('p.PedidoId')
-                ->count('p.PedidoId');
-            $IRS_total_prev = $IRS_fatal_prev + $IRS_amortiguado_prev;
+            $IRS_total_prev = $IRS_fatal_prev;
             $PRS_prev = $TR_prev > 0 ? round(($IRS_total_prev / $TR_prev) * 100, 2) : 0;
             $delta_pct = round($PRS_total - $PRS_prev, 2);
 
@@ -765,14 +742,14 @@ class DashboardService
                 'variables'          => [
                     'IRS'              => $IRS_total,
                     'IRS_fatal'        => $IRS_fatal,
-                    'IRS_amortiguado'  => $IRS_amortiguado,
+                    'IRS_amortiguado'  => 0,
                     'TR'               => $TR,
-                    'tasa_amortig'     => "{$tasaAmortiguacion}%",
+                    'tasa_amortig'     => '0%',
                 ],
                 'resultado'          => $PRS_total,
                 'prs_fatal'          => $PRS_fatal,
-                'prs_amortiguado'    => $PRS_amortiguado,
-                'tasa_amortiguacion' => $tasaAmortiguacion,
+                'prs_amortiguado'    => 0.0,
+                'tasa_amortiguacion' => 0.0,
                 'meta'               => 3.0,
                 'alerta'             => 5.0,
                 'estado_semaforo'    => $estadoSemaforo,
@@ -782,7 +759,7 @@ class DashboardService
                     'resultado' => $PRS_prev,
                     'delta_pct' => $delta_pct,
                 ],
-                'tooltip'            => 'Monitorea quiebres de inventario semanales diferenciando roturas fatales (pedidos perdidos) vs. roturas amortiguadas mediante Stock Virtual.',
+                'tooltip'            => 'Monitorea quiebres de inventario semanales (pedidos anulados o perdidos por falta de stock físico).',
             ];
         });
     }
@@ -801,19 +778,18 @@ class DashboardService
     private function getTopStockoutProducts($inicio, $fin, array $filters): array
     {
         $auditRows = DB::table('auditoria_roturas_stock as a')
-            ->join('Pedido as p', 'p.PedidoId', '=', 'a.pedido_id')
-            ->join('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
-            ->join('Producto as pr', 'pr.ProductoId', '=', 'd.Detalle_Pedido_Productos_ProductoId')
+            ->leftJoin('Pedido as p', 'p.PedidoId', '=', 'a.pedido_id')
+            ->leftJoin('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
+            ->leftJoin('Producto as pr', 'pr.ProductoId', '=', 'd.Detalle_Pedido_Productos_ProductoId')
             ->select(
-                'pr.ProductoNombre as producto',
+                DB::raw("COALESCE(pr.ProductoNombre, 'Producto sin especificar') as producto"),
                 DB::raw("SUM(CASE WHEN a.tipo_rotura = 'VENTA_PERDIDA' THEN 1 ELSE 0 END) as total_quiebres"),
-                DB::raw('ROUND(SUM(a.cantidad_virtual_usada), 1) as consumo_virtual'),
+                DB::raw('0.0 as consumo_virtual'),
                 DB::raw('COUNT(*) as impacto_total')
             )
             ->whereBetween('a.created_at', [$inicio, $fin])
-            ->groupBy('pr.ProductoNombre')
+            ->groupBy(DB::raw("COALESCE(pr.ProductoNombre, 'Producto sin especificar')"))
             ->orderByDesc('impacto_total')
-            ->orderByDesc('consumo_virtual')
             ->limit(10)
             ->get();
 
@@ -822,66 +798,40 @@ class DashboardService
         }
 
         // 1. Productos con quiebres fatales (pedidos cancelados por falta de stock)
-        $fatalSub = DB::table('Pedido as p')
+        $fatalRows = DB::table('Pedido as p')
             ->join('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
+            ->join('Producto as pr', 'pr.ProductoId', '=', 'd.Detalle_Pedido_Productos_ProductoId')
             ->select(
-                'd.Detalle_Pedido_Productos_ProductoId as producto_id',
-                DB::raw('COUNT(*) as quiebres_fatales'),
-                DB::raw('0 as consumo_virtual')
+                'pr.ProductoNombre as producto',
+                DB::raw('COUNT(*) as total_quiebres'),
+                DB::raw('0.0 as consumo_virtual'),
+                DB::raw('COUNT(*) as impacto_total')
             )
             ->where('p.PedidoEliminado', 'N')
             ->where('p.PedidoMotivoAnulacion', 'FALTA_STOCK')
             ->whereBetween('p.PedidoFechaCreacion', [$inicio, $fin])
-            ->groupBy('d.Detalle_Pedido_Productos_ProductoId');
-
-        // 2. Productos con consumo de stock virtual (quiebres amortiguados)
-        $amortSub = DB::table('Pedido as p')
-            ->join('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
-            ->select(
-                'd.Detalle_Pedido_Productos_ProductoId as producto_id',
-                DB::raw('0 as quiebres_fatales'),
-                DB::raw('SUM(d.Detalle_Pedido_Productos_cantidad_virtual) as consumo_virtual')
-            )
-            ->where('p.PedidoEliminado', 'N')
-            ->where('d.Detalle_Pedido_Productos_cantidad_virtual', '>', 0)
-            ->whereBetween('p.PedidoFechaCreacion', [$inicio, $fin])
-            ->groupBy('d.Detalle_Pedido_Productos_ProductoId');
-
-        $unionQuery = $fatalSub->unionAll($amortSub);
-
-        $top = DB::query()->fromSub($unionQuery, 'u')
-            ->join('Producto as pr', 'pr.ProductoId', '=', 'u.producto_id')
-            ->select(
-                'pr.ProductoNombre as producto',
-                DB::raw('SUM(u.quiebres_fatales) as total_quiebres'),
-                DB::raw('ROUND(SUM(u.consumo_virtual), 1) as consumo_virtual'),
-                DB::raw('SUM(u.quiebres_fatales + (CASE WHEN u.consumo_virtual > 0 THEN 1 ELSE 0 END)) as impacto_total')
-            )
             ->groupBy('pr.ProductoNombre')
             ->orderByDesc('impacto_total')
-            ->orderByDesc('consumo_virtual')
             ->limit(10)
             ->get()
             ->toArray();
 
-        if (empty($top)) {
-            // Mostrar los productos con menor stock físico o mayor buffer virtual consumido
-            return DB::table('Producto')
-                ->select(
-                    'ProductoNombre as producto',
-                    DB::raw('CASE WHEN ProductoStockActual <= 0 THEN 1 ELSE 0 END as total_quiebres'),
-                    DB::raw('ROUND(COALESCE(ProductoStockVirtualConsumido, 0), 1) as consumo_virtual'),
-                    DB::raw('1 as impacto_total')
-                )
-                ->where('ProductoEliminado', 'N')
-                ->orderBy('ProductoStockActual', 'asc')
-                ->orderByDesc('ProductoStockVirtualConsumido')
-                ->limit(10)
-                ->get()
-                ->toArray();
+        if (!empty($fatalRows)) {
+            return $fatalRows;
         }
 
-        return $top;
+        return DB::table('Producto')
+            ->select(
+                'ProductoNombre as producto',
+                DB::raw('CASE WHEN ProductoStockActual <= 0 THEN 1 ELSE 0 END as total_quiebres'),
+                DB::raw('0.0 as consumo_virtual'),
+                DB::raw('1 as impacto_total')
+            )
+            ->where('ProductoEliminado', 'N')
+            ->orderBy('ProductoStockActual', 'asc')
+            ->limit(10)
+            ->get()
+            ->toArray();
     }
 
     private function getStockoutByCategory($inicio, $fin, array $filters): array
@@ -893,14 +843,11 @@ class DashboardService
             ->select(
                 'c.Categoria_ProductoDescripcion_categoria as categoria',
                 DB::raw('COUNT(CASE WHEN p.PedidoMotivoAnulacion = \'FALTA_STOCK\' THEN 1 END) as quiebres_fatales'),
-                DB::raw('ROUND(SUM(COALESCE(d.Detalle_Pedido_Productos_cantidad_virtual, 0)), 1) as consumo_virtual'),
+                DB::raw('0.0 as consumo_virtual'),
                 DB::raw('COUNT(*) as total')
             )
             ->where('p.PedidoEliminado', 'N')
-            ->where(function ($q) {
-                $q->where('p.PedidoMotivoAnulacion', 'FALTA_STOCK')
-                  ->orWhere('d.Detalle_Pedido_Productos_cantidad_virtual', '>', 0);
-            })
+            ->where('p.PedidoMotivoAnulacion', 'FALTA_STOCK')
             ->whereBetween('p.PedidoFechaCreacion', [$inicio, $fin])
             ->groupBy('c.Categoria_ProductoDescripcion_categoria')
             ->get()
@@ -908,9 +855,9 @@ class DashboardService
 
         if (empty($byCat)) {
             return [
-                ['categoria' => 'Lácteos y Derivados', 'total' => 3, 'consumo_virtual' => 12.0],
-                ['categoria' => 'Bebidas y Gaseosas', 'total' => 2, 'consumo_virtual' => 8.0],
-                ['categoria' => 'Abarrotes Básicos', 'total' => 1, 'consumo_virtual' => 5.0],
+                ['categoria' => 'Lácteos y Derivados', 'total' => 3, 'consumo_virtual' => 0.0],
+                ['categoria' => 'Bebidas y Gaseosas', 'total' => 2, 'consumo_virtual' => 0.0],
+                ['categoria' => 'Abarrotes Básicos', 'total' => 1, 'consumo_virtual' => 0.0],
             ];
         }
 
@@ -919,48 +866,25 @@ class DashboardService
 
     private function getStockoutCommercialImpact($inicio, $fin, array $filters): array
     {
-        // 1. Ventas perdidas por falta de stock total
-        $perdidas = DB::table('Pedido')
+        $impact = DB::table('Pedido')
             ->select(
                 DB::raw('CAST(PedidoFechaCreacion AS DATE) as fecha'),
-                DB::raw('SUM(PedidoTotal) as monto_perdido'),
-                DB::raw('0 as monto_salvado')
+                DB::raw('ROUND(SUM(PedidoTotal), 2) as monto_perdido'),
+                DB::raw('0.00 as monto_salvado')
             )
             ->where('PedidoEliminado', 'N')
             ->where('PedidoMotivoAnulacion', 'FALTA_STOCK')
             ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
-            ->groupBy(DB::raw('CAST(PedidoFechaCreacion AS DATE)'));
-
-        // 2. Ventas salvadas gracias al Stock Virtual
-        $salvadas = DB::table('Pedido as p')
-            ->join('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
-            ->select(
-                DB::raw('CAST(p.PedidoFechaCreacion AS DATE) as fecha'),
-                DB::raw('0 as monto_perdido'),
-                DB::raw('ROUND(SUM(d.Detalle_Pedido_Productos_cantidad_virtual * d.Detalle_Pedido_Productos_precio_unitario_venta), 2) as monto_salvado')
-            )
-            ->where('p.PedidoEliminado', 'N')
-            ->where('p.PedidoEstado_pedido', '!=', 'A')
-            ->where('d.Detalle_Pedido_Productos_cantidad_virtual', '>', 0)
-            ->whereBetween('p.PedidoFechaCreacion', [$inicio, $fin])
-            ->groupBy(DB::raw('CAST(p.PedidoFechaCreacion AS DATE)'));
-
-        $impact = DB::query()->fromSub($perdidas->unionAll($salvadas), 'u')
-            ->select(
-                'fecha',
-                DB::raw('ROUND(SUM(monto_perdido), 2) as monto_perdido'),
-                DB::raw('ROUND(SUM(monto_salvado), 2) as monto_salvado')
-            )
-            ->groupBy('fecha')
+            ->groupBy(DB::raw('CAST(PedidoFechaCreacion AS DATE)'))
             ->orderBy('fecha', 'asc')
             ->get()
             ->toArray();
 
         if (empty($impact)) {
             return [
-                ['fecha' => Carbon::now()->subDays(3)->toDateString(), 'monto_perdido' => 125.50, 'monto_salvado' => 240.00],
-                ['fecha' => Carbon::now()->subDays(1)->toDateString(), 'monto_perdido' => 84.00,  'monto_salvado' => 315.00],
-                ['fecha' => Carbon::now()->toDateString(),            'monto_perdido' => 0.00,   'monto_salvado' => 182.50],
+                ['fecha' => Carbon::now()->subDays(3)->toDateString(), 'monto_perdido' => 125.50, 'monto_salvado' => 0.00],
+                ['fecha' => Carbon::now()->subDays(1)->toDateString(), 'monto_perdido' => 84.00,  'monto_salvado' => 0.00],
+                ['fecha' => Carbon::now()->toDateString(),            'monto_perdido' => 0.00,   'monto_salvado' => 0.00],
             ];
         }
 
@@ -975,9 +899,9 @@ class DashboardService
                 'ProductoNombre',
                 'ProductoStockActual',
                 'ProductoStockMinimo',
-                'ProductoStockVirtual',
-                'ProductoStockVirtualConsumido',
-                DB::raw('CASE WHEN ProductoStockVirtual > ProductoStockVirtualConsumido THEN ProductoStockVirtual - ProductoStockVirtualConsumido ELSE 0 END as stock_virtual_disponible'),
+                DB::raw('0.00 as ProductoStockVirtual'),
+                DB::raw('0.00 as ProductoStockVirtualConsumido'),
+                DB::raw('0.00 as stock_virtual_disponible'),
                 DB::raw("COALESCE(ProductoZona, 'Zona A - Principal') as ProductoZona")
             )
             ->where('ProductoEliminado', 'N')

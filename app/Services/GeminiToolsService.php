@@ -1452,15 +1452,11 @@ class GeminiToolsService
             $factor         = $resMedida['factor_conversion'];
             $precioUnitario = $resMedida['precio_unitario'] > 0 ? $resMedida['precio_unitario'] : (float)($producto->ProductoPrecioVenta ?? 0);
 
-            $stockFisico           = max(0.0, (float)$producto->ProductoStockActual);
-            $stockVirtual          = (float)($producto->ProductoStockVirtual ?? 50);
-            $stockVirtualConsumido = (float)($producto->ProductoStockVirtualConsumido ?? 0);
-            $stockVirtualDisp      = max(0.0, $stockVirtual - $stockVirtualConsumido);
-            $stockTotal            = $stockFisico + $stockVirtualDisp;
+            $stockFisico = max(0.0, (float)$producto->ProductoStockActual);
+            $stockTotal  = $stockFisico;
 
             $totalEnUnidadBase = round($cant * $factor, 2);
             $cantFisica        = min($totalEnUnidadBase, $stockFisico);
-            $cantVirtual       = max(0.0, round($totalEnUnidadBase - $cantFisica, 2));
             $subtotal          = round($cant * $precioUnitario, 2);
 
             $productosResueltos[] = [
@@ -1473,10 +1469,10 @@ class GeminiToolsService
                 'unidad_descripcion'        => $resMedida['unidad_descripcion'],
                 'factor_conversion'         => $factor,
                 'stock_fisico'              => $stockFisico,
-                'stock_virtual_disponible'  => $stockVirtualDisp,
+                'stock_virtual_disponible'  => 0.0,
                 'stock_total'               => $stockTotal,
                 'cantidad_fisica_estimada'  => $cantFisica,
-                'cantidad_virtual_estimada' => $cantVirtual,
+                'cantidad_virtual_estimada' => 0.0,
                 'precio_unitario'           => $precioUnitario,
                 'cantidad'                  => $cant,
                 'subtotal'                  => $subtotal,
@@ -3750,7 +3746,7 @@ class GeminiToolsService
                 'stock_actual'  => $stockActual,
                 'stock_minimo'  => $stockMinimo,
                 'precio_venta'  => $precioVenta,
-                'stock_virtual' => (float) ($p->ProductoStockVirtual ?? 0),
+                'stock_virtual' => 0.0,
                 'estado_stock'  => $stockActual <= 0 ? 'Agotado' : ($stockActual <= $stockMinimo ? 'Bajo Stock' : 'Normal'),
             ];
         }

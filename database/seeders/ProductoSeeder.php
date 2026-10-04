@@ -42,8 +42,6 @@ class ProductoSeeder extends Seeder
                 'producto_descripcion' => 'Arroz extra costeño grano largo seleccionado',
                 'producto_imagen' => 'U0iyO6prNQJP8ev09hoh7UQzXX5i5zXbmn2VkE5T.jpg',
                 'Producto_producto_ubi_id' => 'UBI-00001',
-                'ProductoStockVirtual' => '50.00',
-                'ProductoStockVirtualConsumido' => '.00',
                 'ProductoZona' => 'Zona A - Bebidas',
                 'ProductoUbicacion' => 'Pasillo 1 - Estante A',
             ],
@@ -69,8 +67,6 @@ class ProductoSeeder extends Seeder
                 'producto_descripcion' => 'No se ingresó descripción',
                 'producto_imagen' => 'Sin imagenes,',
                 'Producto_producto_ubi_id' => 'UBI-00001',
-                'ProductoStockVirtual' => '50.00',
-                'ProductoStockVirtualConsumido' => '.00',
                 'ProductoZona' => 'Zona A - Bebidas',
                 'ProductoUbicacion' => 'Pasillo 1 - Estante B',
             ],
@@ -96,8 +92,6 @@ class ProductoSeeder extends Seeder
                 'producto_descripcion' => 'leche en lata',
                 'producto_imagen' => '/storage/productos/KatcFKGuqkUnfGc5V6LMpO9qvqeMkEhtrHcj3dWD.jpg',
                 'Producto_producto_ubi_id' => 'UBI-00002',
-                'ProductoStockVirtual' => '50.00',
-                'ProductoStockVirtualConsumido' => '.00',
                 'ProductoZona' => 'Zona B - Abarrotes',
                 'ProductoUbicacion' => 'Pasillo 2 - Estante A',
             ],
@@ -123,8 +117,6 @@ class ProductoSeeder extends Seeder
                 'producto_descripcion' => 'No se ingresó descripción',
                 'producto_imagen' => '/storage/productos/XcPtokBjJKQM21QJ8qMaNrg0CPLYYhci0sSJxflL.jpg',
                 'Producto_producto_ubi_id' => 'UBI-00002',
-                'ProductoStockVirtual' => '50.00',
-                'ProductoStockVirtualConsumido' => '.00',
                 'ProductoZona' => 'Zona A - Bebidas',
                 'ProductoUbicacion' => 'Pasillo 1 - Estante C',
             ],
@@ -150,8 +142,6 @@ class ProductoSeeder extends Seeder
                 'producto_descripcion' => 'Aciete',
                 'producto_imagen' => 'Sin imagenes,',
                 'Producto_producto_ubi_id' => 'UBI-00002',
-                'ProductoStockVirtual' => '50.00',
-                'ProductoStockVirtualConsumido' => '.00',
                 'ProductoZona' => 'Zona B - Abarrotes',
                 'ProductoUbicacion' => 'Pasillo 2 - Estante B',
             ],
@@ -177,8 +167,6 @@ class ProductoSeeder extends Seeder
                 'producto_descripcion' => 'Bebida',
                 'producto_imagen' => 'Sin imagenes,',
                 'Producto_producto_ubi_id' => 'UBI-00002',
-                'ProductoStockVirtual' => '50.00',
-                'ProductoStockVirtualConsumido' => '.00',
                 'ProductoZona' => 'Zona C - Lácteos',
                 'ProductoUbicacion' => 'Pasillo 3 - Estante A',
             ],
@@ -204,8 +192,6 @@ class ProductoSeeder extends Seeder
                 'producto_descripcion' => 'Bebida',
                 'producto_imagen' => 'Sin imagenes,',
                 'Producto_producto_ubi_id' => 'UBI-00002',
-                'ProductoStockVirtual' => '50.00',
-                'ProductoStockVirtualConsumido' => '.00',
                 'ProductoZona' => 'Zona C - Lácteos',
                 'ProductoUbicacion' => 'Pasillo 3 - Estante B',
             ],
@@ -217,6 +203,6 @@ class ProductoSeeder extends Seeder
         }
 
         // Reactivar restricciones de claves foráneas
-        DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT all"');
+        // DB::statement(CHECK CONSTRAINT all);
     }
 }

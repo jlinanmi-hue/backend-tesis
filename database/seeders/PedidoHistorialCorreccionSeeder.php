@@ -20,6 +20,6 @@ class PedidoHistorialCorreccionSeeder extends Seeder
         DB::table('pedido_historial_correccion')->delete();
 
         // La tabla no contiene registros actualmente.
-        DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT all"');
+        // DB::statement(CHECK CONSTRAINT all);
     }
 }

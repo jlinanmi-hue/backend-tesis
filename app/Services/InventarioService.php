@@ -107,10 +107,10 @@ class InventarioService
             $p->precio_venta_base = (float) ($detalleBase?->Detalle_Producto_medida_precio_venta ?? 0);
             $p->precio_compra_base_formateado = 'S/ ' . number_format($p->precio_compra_base, 2);
             $p->precio_venta_base_formateado = 'S/ ' . number_format($p->precio_venta_base, 2);
-            $p->stock_virtual_limite = (float) ($p->ProductoStockVirtual ?? 0);
-            $p->stock_virtual_consumido = (float) ($p->ProductoStockVirtualConsumido ?? 0);
-            $p->stock_virtual_disponible = $p->stock_virtual_disponible;
-            $p->stock_total_vendible = $p->stock_total_vendible;
+            $p->stock_virtual_limite = 0.0;
+            $p->stock_virtual_consumido = 0.0;
+            $p->stock_virtual_disponible = 0.0;
+            $p->stock_total_vendible = (float) ($p->ProductoStockActual ?? 0);
 
             return $p;
         };
@@ -197,8 +197,6 @@ class InventarioService
                 'ProductoStockActual' => (string) $stockInicial,
                 'ProductoStockMinimo' => (string) ($datosProducto['ProductoStockMinimo'] ?? 5),
                 'ProductoStockMaximo' => (string) ($datosProducto['ProductoStockMaximo'] ?? 1000),
-                'ProductoStockVirtual' => (string) (isset($datosProducto['ProductoStockVirtual']) ? $datosProducto['ProductoStockVirtual'] : 50.00),
-                'ProductoStockVirtualConsumido' => '0.00',
                 'ProductoEstado' => $datosProducto['ProductoEstado'] ?? 'A',
                 'ProductoEliminado' => 'N',
             ];
@@ -542,22 +540,11 @@ class InventarioService
 
             // 5. Calcular nuevo stock y validar disponibilidad en caso de salida
             $stockActual = (float) $producto->ProductoStockActual;
-            $deudaVirtual = (float) ($producto->ProductoStockVirtualConsumido ?? 0);
 
             if ($tipoMovimiento === 'E') {
                 $cantidadEntrada = $cantidadReal;
                 $cantidadSalida = 0;
-
-                // Si hay deuda de stock virtual tomada en pedidos, cubrirla primero
-                if ($deudaVirtual > 0) {
-                    $coberturaVirtual = min($cantidadReal, $deudaVirtual);
-                    $excedenteFisico = max(0.0, round($cantidadReal - $coberturaVirtual, 2));
-                    $nuevoConsumido = max(0.0, round($deudaVirtual - $coberturaVirtual, 2));
-                    $producto->update(['ProductoStockVirtualConsumido' => $nuevoConsumido]);
-                    $nuevoStock = $stockActual + $excedenteFisico;
-                } else {
-                    $nuevoStock = $stockActual + $cantidadReal;
-                }
+                $nuevoStock = $stockActual + $cantidadReal;
             } else { // 'S'
                 if ($stockActual < $cantidadReal) {
                     throw ValidationException::withMessages([

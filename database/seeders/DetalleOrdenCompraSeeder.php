@@ -549,6 +549,6 @@ class DetalleOrdenCompraSeeder extends Seeder
         }
 
         // Reactivar restricciones de claves foráneas
-        DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT all"');
+        // DB::statement(CHECK CONSTRAINT all);
     }
 }

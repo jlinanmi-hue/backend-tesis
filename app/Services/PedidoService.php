@@ -100,7 +100,7 @@ class PedidoService
             $subtotalGeneral = 0.00;
             $itemsParaProcesar = [];
 
-            // Primera pasada: Bloqueo y validación de stock (Físico + Virtual con Factor de Conversión)
+            // Primera pasada: Bloqueo y validación de stock físico con Factor de Conversión
             foreach ($detallesInput as $idx => $item) {
                 $productoId = trim($item['producto_id'] ?? '');
                 $cantidad = (float) ($item['cantidad'] ?? 0);
@@ -146,17 +146,14 @@ class PedidoService
                 $cantidadBase = round($cantidad * $factor, 2);
 
                 $stockFisico = max(0.0, (float) $producto->ProductoStockActual);
-                $stockVirtualDisp = $producto->stock_virtual_disponible;
-                $stockTotalDisp = $producto->stock_total_vendible;
 
-                if ($cantidadBase > $stockTotalDisp) {
+                if ($cantidadBase > $stockFisico) {
                     try {
                         AuditoriaRoturaStock::create([
                             'pedido_id'                  => null,
                             'cantidad_solicitada'        => $cantidadBase,
                             'cantidad_disponible_fisica' => $stockFisico,
-                            'cantidad_virtual_usada'     => 0.00,
-                            'deficit_unidades'           => round($cantidadBase - $stockTotalDisp, 2),
+                            'deficit_unidades'           => round($cantidadBase - $stockFisico, 2),
                             'tipo_rotura'                => 'VENTA_PERDIDA',
                             'rompe_stock_seguridad'      => true,
                             'categoria_id'               => $producto->Producto_Categoria_ProductoId,
@@ -166,18 +163,11 @@ class PedidoService
                     } catch (\Throwable $e) {}
 
                     throw ValidationException::withMessages([
-                        'stock' => "Stock insuficiente para '{$producto->ProductoNombre}'. Solicitado: {$cantidad} ({$cantidadBase} unidades base), Stock Físico: {$stockFisico}, Stock Virtual disponible: {$stockVirtualDisp} (Total vendible disponible: {$stockTotalDisp}).",
+                        'stock' => "Stock insuficiente para '{$producto->ProductoNombre}'. Solicitado: {$cantidad} ({$cantidadBase} unidades base), Stock Físico disponible: {$stockFisico}.",
                     ]);
                 }
 
-                // Desglose de consumo en unidades base: Primero se agota el físico; el remanente se toma del virtual
-                if ($stockFisico >= $cantidadBase) {
-                    $cantFisica = $cantidadBase;
-                    $cantVirtual = 0.0;
-                } else {
-                    $cantFisica = $stockFisico;
-                    $cantVirtual = round($cantidadBase - $stockFisico, 2);
-                }
+                $cantFisica = $cantidadBase;
 
                 // Determinar precio unitario de venta (precio por la presentación vendida)
                 $precioUnitario = isset($item['precio_unitario']) && (float)$item['precio_unitario'] > 0
@@ -197,7 +187,6 @@ class PedidoService
                     'cantidad' => $cantidad,
                     'cantidad_base' => $cantidadBase,
                     'cant_fisica' => $cantFisica,
-                    'cant_virtual' => $cantVirtual,
                     'precio_unitario' => $precioUnitario,
                     'subtotal' => $subtotalItem,
                 ];
@@ -300,7 +289,6 @@ class PedidoService
                 $cantidad = $item['cantidad'];
                 $cantidadBase = $item['cantidad_base'];
                 $cantFisica = $item['cant_fisica'];
-                $cantVirtual = $item['cant_virtual'];
                 $unidadId = $item['unidad_id'];
                 $factor = $item['factor_conversion'];
                 $precioUnitario = $item['precio_unitario'];
@@ -316,27 +304,7 @@ class PedidoService
                 }
                 $nuevoStockFisico = (float) $producto->fresh()->ProductoStockActual;
 
-                // 2. Incrementar el stock virtual consumido (deuda virtual pendiente de reposición)
-                if ($cantVirtual > 0) {
-                    $producto->increment('ProductoStockVirtualConsumido', $cantVirtual);
-
-                    try {
-                        AuditoriaRoturaStock::create([
-                            'pedido_id'                  => $pedidoId,
-                            'cantidad_solicitada'        => $cantidadBase,
-                            'cantidad_disponible_fisica' => $stockFisico,
-                            'cantidad_virtual_usada'     => $cantVirtual,
-                            'deficit_unidades'           => $cantVirtual,
-                            'tipo_rotura'                => 'AMORTIGUADO',
-                            'rompe_stock_seguridad'      => ($stockFisico <= (float)($producto->ProductoStockMinimo ?? 0)),
-                            'categoria_id'               => $producto->Producto_Categoria_ProductoId,
-                            'usuario'                    => $usuarioRegistro,
-                            'created_at'                 => now(),
-                        ]);
-                    } catch (\Throwable $e) {}
-                }
-
-                // 3. Registrar salida en Kárdex (Movimiento_producto) con factor y unidad real
+                // 2. Registrar salida en Kárdex (Movimiento_producto) con factor y unidad real
                 $movimientoId = $this->inventarioService->getNextMovimientoId();
                 $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
 
@@ -355,7 +323,7 @@ class PedidoService
                     'Movimiento_productoEliminado' => 'N',
                 ], $auditMov));
 
-                // 4. Registrar Detalle_Pedido_Productos con unidad, factor y desglose físico/virtual
+                // 3. Registrar Detalle_Pedido_Productos con unidad, factor y desglose físico
                 $auditDetalle = AuditHelper::getCreationAudit('Detalle_Pedido_Productos');
                 DetallePedidoProductos::create(array_merge([
                     'Detalle_Pedido_Productos_PedidoId' => $pedidoId,
@@ -365,7 +333,6 @@ class PedidoService
                     'Detalle_Pedido_Productos_cantidad' => $cantidad,
                     'Detalle_Pedido_Productos_cantidad_base' => $cantidadBase,
                     'Detalle_Pedido_Productos_cantidad_fisica' => $cantFisica,
-                    'Detalle_Pedido_Productos_cantidad_virtual' => $cantVirtual,
                     'Detalle_Pedido_Productos_precio_unitario_venta' => $precioUnitario,
                     'Detalle_Pedido_Productos_subtotal' => $subtotal,
                     'Detalle_Pedido_ProductosEliminado' => 'N',
@@ -543,26 +510,17 @@ class PedidoService
         $stockFisico = max(0.0, (float)$producto->ProductoStockActual);
         $stockTotalDisp = $producto->stock_total_vendible;
 
-        if ($cantidadBase > $stockTotalDisp) {
+        if ($cantidadBase > $stockFisico) {
             throw ValidationException::withMessages([
-                'stock' => "Stock insuficiente para '{$producto->ProductoNombre}'. Requerido: {$cant} ({$cantidadBase} unidades base), Vendible disponible: {$stockTotalDisp}.",
+                'stock' => "Stock insuficiente para '{$producto->ProductoNombre}'. Requerido: {$cant} ({$cantidadBase} unidades base), Stock Físico disponible: {$stockFisico}.",
             ]);
         }
 
-        if ($stockFisico >= $cantidadBase) {
-            $cantFisica = $cantidadBase;
-            $cantVirtual = 0.0;
-        } else {
-            $cantFisica = $stockFisico;
-            $cantVirtual = round($cantidadBase - $stockFisico, 2);
-        }
+        $cantFisica = $cantidadBase;
 
         // Descontar inventario
         if ($cantFisica > 0) {
             $producto->decrement('ProductoStockActual', $cantFisica);
-        }
-        if ($cantVirtual > 0) {
-            $producto->increment('ProductoStockVirtualConsumido', $cantVirtual);
         }
 
         $nuevoStockFisico = (float)$producto->fresh()->ProductoStockActual;
@@ -597,13 +555,11 @@ class PedidoService
             $nuevaCantBase = round($nuevaCant * $factor, 2);
             $nuevoSubtotal = round($nuevaCant * $precioUnitario, 2);
             $nuevaFisica = (float)$detalleExistente->Detalle_Pedido_Productos_cantidad_fisica + $cantFisica;
-            $nuevaVirtual = (float)$detalleExistente->Detalle_Pedido_Productos_cantidad_virtual + $cantVirtual;
 
             $detalleExistente->update(array_merge([
                 'Detalle_Pedido_Productos_cantidad' => $nuevaCant,
                 'Detalle_Pedido_Productos_cantidad_base' => $nuevaCantBase,
                 'Detalle_Pedido_Productos_cantidad_fisica' => $nuevaFisica,
-                'Detalle_Pedido_Productos_cantidad_virtual' => $nuevaVirtual,
                 'Detalle_Pedido_Productos_subtotal' => $nuevoSubtotal,
             ], AuditHelper::getModificationAudit('Detalle_Pedido_Productos')));
         } else {
@@ -617,7 +573,6 @@ class PedidoService
                 'Detalle_Pedido_Productos_cantidad' => $cant,
                 'Detalle_Pedido_Productos_cantidad_base' => $cantidadBase,
                 'Detalle_Pedido_Productos_cantidad_fisica' => $cantFisica,
-                'Detalle_Pedido_Productos_cantidad_virtual' => $cantVirtual,
                 'Detalle_Pedido_Productos_precio_unitario_venta' => $precioUnitario,
                 'Detalle_Pedido_Productos_subtotal' => $subtotal,
                 'Detalle_Pedido_ProductosEliminado' => 'N',
@@ -634,15 +589,11 @@ class PedidoService
 
         foreach ($detalles as $det) {
             $cantFisica = (float)$det->Detalle_Pedido_Productos_cantidad_fisica;
-            $cantVirtual = (float)$det->Detalle_Pedido_Productos_cantidad_virtual;
 
             $producto = Producto::where('ProductoId', $det->Detalle_Pedido_Productos_ProductoId)->lockForUpdate()->first();
             if ($producto) {
                 if ($cantFisica > 0) {
                     $producto->increment('ProductoStockActual', $cantFisica);
-                }
-                if ($cantVirtual > 0) {
-                    $producto->decrement('ProductoStockVirtualConsumido', min((float)$producto->ProductoStockVirtualConsumido, $cantVirtual));
                 }
 
                 $nuevoSaldo = (float)$producto->fresh()->ProductoStockActual;
@@ -742,7 +693,6 @@ class PedidoService
                 $producto = $detalle->producto;
                 $cantidad = (float) $detalle->Detalle_Pedido_Productos_cantidad;
                 $cantFisica = (float) ($detalle->Detalle_Pedido_Productos_cantidad_fisica ?? $cantidad);
-                $cantVirtual = (float) ($detalle->Detalle_Pedido_Productos_cantidad_virtual ?? 0);
 
                 if ($producto && $cantidad > 0) {
                     // 1. Revertir la porción física consumida
@@ -750,17 +700,10 @@ class PedidoService
                         $producto->increment('ProductoStockActual', $cantFisica);
                     }
 
-                    // 2. Revertir la porción virtual consumida (reducir deuda virtual para dejar el buffer disponible)
-                    if ($cantVirtual > 0) {
-                        $actualConsumido = (float) ($producto->ProductoStockVirtualConsumido ?? 0);
-                        $nuevoConsumido = max(0.0, $actualConsumido - $cantVirtual);
-                        $producto->update(['ProductoStockVirtualConsumido' => $nuevoConsumido]);
-                    }
-
                     $nuevoStock = (float) $producto->fresh()->ProductoStockActual;
                     $unidadId = $detalle->Detalle_Pedido_Productos_unidades_medidaId ?? 'UND-00001';
 
-                    // 3. Registrar contra-movimiento de entrada compensatoria en Kárdex
+                    // 2. Registrar contra-movimiento de entrada compensatoria en Kárdex
                     $movimientoId = $this->inventarioService->getNextMovimientoId();
                     $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
 
@@ -824,7 +767,6 @@ class PedidoService
                             'pedido_id'                  => $pedido->PedidoId,
                             'cantidad_solicitada'        => (float) $det->Detalle_Pedido_Productos_cantidad,
                             'cantidad_disponible_fisica' => 0.00,
-                            'cantidad_virtual_usada'     => 0.00,
                             'deficit_unidades'           => (float) $det->Detalle_Pedido_Productos_cantidad,
                             'tipo_rotura'                => 'VENTA_PERDIDA',
                             'rompe_stock_seguridad'      => true,
