@@ -223,4 +223,59 @@ class NotificacionService
             })
             ->all();
     }
+
+    /**
+     * Helper específico para notificar ingreso de stock desde recepción de Orden de Compra
+     */
+    public function notificarIngresoStock(
+        Producto $producto,
+        float $cantidadRecibida,
+        string $ordenId,
+        float $stockAnterior,
+        float $stockNuevo
+    ): Notificacion {
+        $cantStr = number_format($cantidadRecibida, 2);
+
+        return $this->crear([
+            'titulo' => "Ingreso de Mercadería: {$producto->ProductoNombre}",
+            'mensaje' => "Se ingresaron {$cantStr} unidades al stock desde la OC {$ordenId}.",
+            'tipo' => 'success',
+            'categoria' => 'COMPRAS',
+            'referencia_id' => $ordenId,
+            'badge_texto' => 'Stock Disponible',
+            'badge_tipo' => 'success',
+            'badge_color' => '#10B981',
+            'badge_icono' => 'check_circle',
+            'flujo_origen' => "OC: {$ordenId}",
+            'flujo_destino' => 'Almacén Central',
+            'flujo_indicador' => "+{$cantStr} UND",
+            'accion_texto' => 'Ver Órdenes de Compra',
+            'accion_url' => '/ordenes-compra',
+        ]);
+    }
+
+    /**
+     * Helper específico para notificar anulación de recepción de Orden de Compra
+     */
+    public function notificarAnulacionRecepcion(
+        string $ordenId,
+        string $motivo
+    ): Notificacion {
+        return $this->crear([
+            'titulo' => "Recepción Anulada: {$ordenId}",
+            'mensaje' => "Se aplicaron contra-movimientos en Kárdex. Motivo: {$motivo}",
+            'tipo' => 'warning',
+            'categoria' => 'COMPRAS',
+            'referencia_id' => $ordenId,
+            'badge_texto' => 'Contra-Movimiento',
+            'badge_tipo' => 'warning',
+            'badge_color' => '#EF4444',
+            'badge_icono' => 'alert_triangle',
+            'flujo_origen' => "OC: {$ordenId}",
+            'flujo_destino' => 'Almacén Central',
+            'flujo_indicador' => 'Stock Revertido',
+            'accion_texto' => 'Ver Órdenes de Compra',
+            'accion_url' => '/ordenes-compra',
+        ]);
+    }
 }

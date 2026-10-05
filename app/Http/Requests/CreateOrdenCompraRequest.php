@@ -19,7 +19,11 @@ class CreateOrdenCompraRequest extends FormRequest
             'Orden_CompraObservacion' => ['nullable', 'string', 'max:250'],
             'Orden_Compra_ProveedorId' => ['nullable', 'string', 'max:20', 'exists:Proveedor,ProveedorId'],
             'proveedor_id' => ['nullable', 'string', 'max:20', 'exists:Proveedor,ProveedorId'],
-            'Orden_CompraEstado' => ['nullable', 'string', 'in:P,C,A,p,c,a'],
+            'Orden_CompraEstado' => ['nullable', 'string', 'in:EMITIDA,RECEPCION_PARCIAL,CERRADA_CONFORME,CERRADA_CON_FALTANTE,ANULADA,BORRADOR,ENVIADA,PENDIENTE_RECEPCION,EN_RECEPCION,CERRADA,CANCELADA_PROVEEDOR,emitida,recepcion_parcial,cerrada_conforme,cerrada_con_faltante,anulada,P,C,A,p,c,a'],
+            'estado' => ['nullable', 'string', 'in:EMITIDA,RECEPCION_PARCIAL,CERRADA_CONFORME,CERRADA_CON_FALTANTE,ANULADA,BORRADOR,ENVIADA,PENDIENTE_RECEPCION,EN_RECEPCION,CERRADA,CANCELADA_PROVEEDOR,emitida,recepcion_parcial,cerrada_conforme,cerrada_con_faltante,anulada,P,C,A,p,c,a'],
+            'Orden_CompraFechaEstimadaLlegada' => ['nullable', 'date'],
+            'fecha_estimada_llegada' => ['nullable', 'date'],
+            'fecha_entrega_estimada' => ['nullable', 'date'],
             'Orden_CompraIgv' => ['nullable', 'numeric', 'min:0'],
 
             'detalles' => ['required', 'array', 'min:1'],
@@ -52,6 +56,14 @@ class CreateOrdenCompraRequest extends FormRequest
 
         if (empty($input['Orden_Compra_ProveedorId']) && !empty($input['proveedor_id'])) {
             $input['Orden_Compra_ProveedorId'] = $input['proveedor_id'];
+        }
+
+        if (empty($input['Orden_CompraFechaEstimadaLlegada'])) {
+            if (!empty($input['fecha_entrega_estimada'])) {
+                $input['Orden_CompraFechaEstimadaLlegada'] = $input['fecha_entrega_estimada'];
+            } elseif (!empty($input['fecha_estimada_llegada'])) {
+                $input['Orden_CompraFechaEstimadaLlegada'] = $input['fecha_estimada_llegada'];
+            }
         }
 
         if (isset($input['detalles']) && is_array($input['detalles'])) {

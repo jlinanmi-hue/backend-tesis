@@ -581,6 +581,10 @@ class InventarioService
                 'Movimiento_producto_ProductoId' => $productoId,
                 'Movimiento_producto_Detalle_Producto_medida_ProductoId' => $productoId,
                 'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $unidadesMedidaId,
+                'Movimiento_productoSubtipo' => $datos['subtipo'] ?? $datos['Movimiento_productoSubtipo'] ?? null,
+                'Movimiento_productoReferenciaTipo' => $datos['referenciaTipo'] ?? $datos['Movimiento_productoReferenciaTipo'] ?? null,
+                'Movimiento_productoReferenciaId' => $datos['referenciaId'] ?? $datos['Movimiento_productoReferenciaId'] ?? null,
+                'Movimiento_productoMotivo' => $datos['motivo'] ?? $datos['Movimiento_productoMotivo'] ?? null,
                 'Movimiento_productoEliminado' => 'N',
             ];
             $payloadMovimiento = array_merge($payloadMovimiento, $auditMovimiento);
@@ -626,6 +630,10 @@ class InventarioService
 
         if (!empty($filters['tipoMovimiento'])) {
             $query->where('Movimiento_productoTipoMovimiento', strtoupper($filters['tipoMovimiento']));
+        }
+
+        if (!empty($filters['subtipo'])) {
+            $query->where('Movimiento_productoSubtipo', strtoupper($filters['subtipo']));
         }
 
         if (!empty($filters['dias']) && is_numeric($filters['dias'])) {
@@ -686,8 +694,22 @@ class InventarioService
                 : rtrim(rtrim(number_format($saldo, 2), '0'), '.');
 
             $doc = $m->Movimiento_productoDocumentoOperacionId ?? '';
+            $subtipo = $m->Movimiento_productoSubtipo ?? '';
             $tipoOperacion = 'Movimiento de Inventario';
-            if (str_starts_with($doc, 'AJU-')) {
+
+            if ($subtipo === 'RECEPCION_OC') {
+                $tipoOperacion = 'Recepción de Orden de Compra';
+            } elseif ($subtipo === 'ANULACION_RECEPCION') {
+                $tipoOperacion = 'Contra-Movimiento (Anulación OC)';
+            } elseif ($subtipo === 'COMPRA_RAPIDA') {
+                $tipoOperacion = 'Compra Rápida a PYME Vecina';
+            } elseif ($subtipo === 'AJUSTE_MANUAL') {
+                $tipoOperacion = 'Ajuste Manual de Kárdex';
+            } elseif ($subtipo === 'DEVOLUCION_CLIENTE') {
+                $tipoOperacion = 'Devolución de Pedido Cliente';
+            } elseif ($subtipo === 'INVENTARIO_INICIAL') {
+                $tipoOperacion = 'Inventario Inicial';
+            } elseif (str_starts_with($doc, 'AJU-')) {
                 $tipoOperacion = 'Ajuste / Merma de Inventario';
             } elseif (str_starts_with($doc, 'REV-')) {
                 $tipoOperacion = 'Reversión de Ajuste';
@@ -698,6 +720,11 @@ class InventarioService
             } elseif (str_starts_with($doc, 'F') || str_starts_with($doc, 'B') || str_starts_with($doc, 'DOC-')) {
                 $tipoOperacion = $esEntrada ? 'Recepción / Compra' : 'Salida de Mercadería';
             }
+
+            $m->subtipo = $subtipo;
+            $m->referencia_tipo = $m->Movimiento_productoReferenciaTipo;
+            $m->referencia_id = $m->Movimiento_productoReferenciaId;
+            $m->motivo = $m->Movimiento_productoMotivo;
 
             $m->producto_id = $m->Movimiento_producto_ProductoId;
             $m->producto_nombre = $m->producto->ProductoNombre ?? 'Producto no disponible';
@@ -804,8 +831,22 @@ class InventarioService
             : rtrim(rtrim(number_format($saldo, 2), '0'), '.');
 
         $doc = $movimiento->Movimiento_productoDocumentoOperacionId ?? '';
+        $subtipo = $movimiento->Movimiento_productoSubtipo ?? '';
         $tipoOperacion = 'Movimiento de Inventario';
-        if (str_starts_with($doc, 'AJU-')) {
+
+        if ($subtipo === 'RECEPCION_OC') {
+            $tipoOperacion = 'Recepción de Orden de Compra';
+        } elseif ($subtipo === 'ANULACION_RECEPCION') {
+            $tipoOperacion = 'Contra-Movimiento (Anulación OC)';
+        } elseif ($subtipo === 'COMPRA_RAPIDA') {
+            $tipoOperacion = 'Compra Rápida a PYME Vecina';
+        } elseif ($subtipo === 'AJUSTE_MANUAL') {
+            $tipoOperacion = 'Ajuste Manual de Kárdex';
+        } elseif ($subtipo === 'DEVOLUCION_CLIENTE') {
+            $tipoOperacion = 'Devolución de Pedido Cliente';
+        } elseif ($subtipo === 'INVENTARIO_INICIAL') {
+            $tipoOperacion = 'Inventario Inicial';
+        } elseif (str_starts_with($doc, 'AJU-')) {
             $tipoOperacion = 'Ajuste / Merma de Inventario';
         } elseif (str_starts_with($doc, 'REV-')) {
             $tipoOperacion = 'Reversión de Ajuste';
@@ -839,6 +880,46 @@ class InventarioService
         }
 
         $movimiento->documento_referencia = $doc;
+        $movimiento->subtipo = $subtipo;
+        $movimiento->referencia_tipo = $movimiento->Movimiento_productoReferenciaTipo;
+        $movimiento->referencia_id = $movimiento->Movimiento_productoReferenciaId;
+        $movimiento->motivo = $movimiento->Movimiento_productoMotivo;
+
+        // Resolver entidad asociada (Proveedor de la OC o Cliente del Pedido)
+        $refOcId = $movimiento->Movimiento_productoReferenciaId;
+        if (!$refOcId && preg_match('/OC-\d+/', $doc, $matches)) {
+            $refOcId = $matches[0];
+        }
+        if ($refOcId && ($movimiento->Movimiento_productoReferenciaTipo === 'ORDEN_COMPRA' || str_contains($doc, 'OC-') || in_array($subtipo, ['RECEPCION_OC', 'ANULACION_RECEPCION', 'COMPRA_RAPIDA']))) {
+            $orden = \App\Models\OrdenCompra::with('proveedor')->find($refOcId);
+            if ($orden && $orden->proveedor) {
+                $movimiento->proveedor = [
+                    'id' => $orden->proveedor->ProveedorId,
+                    'razon_social' => $orden->proveedor->ProveedorRazonSocial,
+                    'ruc' => $orden->proveedor->ProveedorRuc,
+                    'direccion' => $orden->proveedor->ProveedorDireccion,
+                    'telefono' => $orden->proveedor->ProveedorTelefono,
+                ];
+            }
+        }
+
+        $refPedId = $movimiento->Movimiento_productoReferenciaId;
+        if (!$refPedId && preg_match('/PED-\d+/', $doc, $matchesPed)) {
+            $refPedId = $matchesPed[0];
+        }
+        if ($refPedId && ($movimiento->Movimiento_productoReferenciaTipo === 'PEDIDO' || str_contains($doc, 'PED-') || $subtipo === 'DEVOLUCION_CLIENTE')) {
+            $pedido = \App\Models\Pedido::with('cliente')->find($refPedId);
+            if ($pedido && $pedido->cliente) {
+                $movimiento->cliente = [
+                    'id' => $pedido->cliente->ClienteId,
+                    'nombre' => $pedido->cliente->ClienteNombre,
+                    'ruc' => $pedido->cliente->ClienteRuc,
+                    'direccion' => $pedido->cliente->ClienteDireccion,
+                    'telefono' => $pedido->cliente->ClienteNumero,
+                ];
+            }
+        }
+
         $movimiento->fecha_movimiento_formateada = $fechaMov
             ? \Carbon\Carbon::parse($fechaMov)->format('Y-m-d H:i')
             : '—';
@@ -1378,5 +1459,88 @@ class InventarioService
             'precios_por_unidad' => $preciosConfigurados,
             'historial_compras_recientes' => $historialCompras,
         ];
+    }
+
+    /**
+     * Crear un producto rápido desde el modal express de recepción de OC.
+     */
+    public function crearProductoExpress(array $datos): Producto
+    {
+        return DB::transaction(function () use ($datos) {
+            $nombre = trim($datos['nombre'] ?? $datos['ProductoNombre'] ?? '');
+            if (empty($nombre)) {
+                throw ValidationException::withMessages([
+                    'nombre' => 'El nombre del producto es obligatorio.',
+                ]);
+            }
+
+            // Categoría fallback a la primera existente si no se proporciona
+            $categoriaId = $datos['categoria_id'] ?? $datos['Producto_Categoria_ProductoId'] ?? null;
+            if (!$categoriaId) {
+                $primeraCat = CategoriaProducto::where('Categoria_ProductoEliminado', 'N')->first();
+                $categoriaId = $primeraCat ? $primeraCat->Categoria_ProductoId : 'CAT-00001';
+            }
+
+            // Unidad de medida base fallback
+            $unidadMedidaId = $datos['unidad_base_id'] ?? $datos['unidades_medidaId'] ?? null;
+            if (!$unidadMedidaId) {
+                $primeraUnidad = UnidadesMedida::where('unidades_medidaEliminado', 'N')->first();
+                $unidadMedidaId = $primeraUnidad ? $primeraUnidad->unidades_medidaId : 'UND-00001';
+            }
+
+            $precioCompra = (float) ($datos['precio_compra'] ?? 0.0);
+            $precioVenta = (float) ($datos['precio_venta'] ?? ($precioCompra > 0 ? $precioCompra * 1.25 : 1.0));
+
+            $detalles = [
+                [
+                    'unidades_medidaId' => $unidadMedidaId,
+                    'Detalle_Producto_medida_factor_conversion' => 1,
+                    'Detalle_Producto_medida_precio_compra' => $precioCompra,
+                    'Detalle_Producto_medida_precio_venta' => $precioVenta,
+                ],
+            ];
+
+            $datosProd = [
+                'ProductoNombre' => $nombre,
+                'Producto_Categoria_ProductoId' => $categoriaId,
+                'ProductoMarca' => $datos['marca'] ?? 'Genérico',
+                'producto_descripcion' => $datos['descripcion'] ?? 'Producto registrado desde recepción express de OC',
+                'stockInicial' => 0.0,
+                'ProductoStockMinimo' => $datos['stock_minimo'] ?? 5,
+                'ProductoStockMaximo' => $datos['stock_maximo'] ?? 500,
+            ];
+
+            $proveedores = !empty($datos['proveedor_id']) ? [$datos['proveedor_id']] : [];
+
+            return $this->crearProducto($datosProd, $detalles, $proveedores);
+        });
+    }
+
+    /**
+     * Ajuste manual de Kárdex con motivo obligatorio y registro formal.
+     */
+    public function ajusteManual(array $datos): MovimientoProducto
+    {
+        $motivo = trim($datos['motivo'] ?? '');
+        if (mb_strlen($motivo) < 10) {
+            throw ValidationException::withMessages([
+                'motivo' => 'El motivo del ajuste manual es obligatorio y debe tener al menos 10 caracteres.',
+            ]);
+        }
+
+        $tipo = strtoupper(trim($datos['tipo'] ?? 'E'));
+        if (!in_array($tipo, ['E', 'S'])) {
+            throw ValidationException::withMessages([
+                'tipo' => 'El tipo de ajuste debe ser E (Entrada) o S (Salida).',
+            ]);
+        }
+
+        $datos['tipoMovimiento'] = $tipo;
+        $datos['subtipo'] = 'AJUSTE_MANUAL';
+        $datos['referenciaTipo'] = 'AJUSTE_MANUAL';
+        $datos['motivo'] = $motivo;
+        $datos['documentoOperacionId'] = 'AJUSTE-' . now()->format('YmdHis');
+
+        return $this->registrarMovimiento($datos);
     }
 }

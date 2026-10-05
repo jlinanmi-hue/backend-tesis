@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Http\Requests\CreateProveedorRequest;
 use App\Http\Requests\UpdateEstadoProveedorRequest;
 use App\Http\Requests\UpdateProveedorRequest;
+use App\Services\DashboardService;
 use App\Services\ProveedorService;
 use Exception;
 use Illuminate\Http\JsonResponse;
@@ -60,6 +61,54 @@ class ProveedorController extends Controller
                 'success' => false,
                 'data' => null,
                 'message' => 'Error al obtener resumen de proveedores: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Métricas de cumplimiento de proveedores (OTD, IF, OTIF, Lead Time).
+     * GET /api/proveedores/cumplimiento
+     */
+    public function cumplimiento(Request $request, DashboardService $dashboardService): JsonResponse
+    {
+        try {
+            $inicio = $request->input('fecha_desde');
+            $fin = $request->input('fecha_hasta');
+            $datos = $dashboardService->getCumplimientoProveedores($inicio, $fin);
+
+            return response()->json([
+                'success' => true,
+                'data' => $datos,
+                'message' => 'Indicadores de cumplimiento de proveedores calculados exitosamente.',
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al calcular cumplimiento de proveedores: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Ranking de proveedores ordenados por OTIF (On-Time In-Full).
+     * GET /api/proveedores/ranking-cumplimiento
+     */
+    public function rankingCumplimiento(Request $request, DashboardService $dashboardService): JsonResponse
+    {
+        try {
+            $inicio = $request->input('fecha_desde');
+            $fin = $request->input('fecha_hasta');
+            $datos = $dashboardService->getCumplimientoProveedores($inicio, $fin);
+
+            return response()->json([
+                'success' => true,
+                'data' => $datos['ranking_proveedores'] ?? [],
+                'message' => 'Ranking OTIF de proveedores obtenido con éxito.',
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener ranking de cumplimiento: ' . $e->getMessage(),
             ], 500);
         }
     }

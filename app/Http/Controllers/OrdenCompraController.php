@@ -153,6 +153,33 @@ class OrdenCompraController extends Controller
     }
 
     /**
+     * Eliminar una orden de compra (eliminación lógica).
+     * DELETE /api/ordenes-compra/{id}
+     */
+    public function destroy(string $id): JsonResponse
+    {
+        try {
+            $this->ordenCompraService->eliminarOrden($id);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Orden de compra {$id} eliminada correctamente.",
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No se puede eliminar la orden',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al eliminar la orden de compra: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Asignar un proveedor a una orden de compra pendiente.
      */
     public function asignarProveedor(AsignarProveedorRequest $request, string $id): JsonResponse
@@ -217,30 +244,241 @@ class OrdenCompraController extends Controller
     }
 
     /**
-     * Anulación lógica (eliminación suave) de la orden.
+     * Iniciar la recepción de mercadería para una orden de compra.
+     * POST /api/ordenes-compra/{id}/iniciar-recepcion
      */
-    public function destroy(string $id): JsonResponse
+    public function iniciarRecepcion(string $id): JsonResponse
     {
         try {
-            $this->ordenCompraService->eliminarOrden($id);
+            $orden = $this->ordenCompraService->iniciarRecepcion($id);
 
             return response()->json([
                 'success' => true,
-                'message' => "Orden de compra {$id} eliminada correctamente.",
-            ]);
+                'message' => "Recepción iniciada para la orden {$id}.",
+                'data' => new OrdenCompraResource($orden),
+            ], 200);
         } catch (ValidationException $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error de validación',
+                'message' => 'Error de validación al iniciar recepción',
                 'errors' => $e->errors(),
             ], 422);
         } catch (Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Error al eliminar orden: ' . $e->getMessage(),
+                'message' => 'Error al iniciar recepción: ' . $e->getMessage(),
             ], 500);
         }
     }
+
+    /**
+     * Recepcionar un ítem individual e ingresarlo formalmente a Kárdex.
+     * POST /api/ordenes-compra/{id}/recepcionar-item
+     */
+    public function recepcionarItem(Request $request, string $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'detalle_id' => 'required',
+                'cantidad_recibida' => 'required|numeric|gt:0',
+                'es_producto_nuevo' => 'nullable|boolean',
+            ]);
+
+            $resultado = $this->ordenCompraService->recepcionarItem($id, $validated);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Ítem recepcionado e ingresado a Kárdex correctamente.',
+                'data' => $resultado,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error de validación en recepción de ítem',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al recepcionar ítem: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Rechazar un ítem individual de la orden de compra en recepción.
+     * POST /api/ordenes-compra/{id}/rechazar-item
+     */
+    public function rechazarItem(Request $request, string $id): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'detalle_id' => 'required',
+                'motivo' => 'nullable|string|max:250',
+            ]);
+
+            $resultado = $this->ordenCompraService->rechazarItem($id, $validated);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Producto rechazado formalmente.',
+                'data' => $resultado,
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error de validación al rechazar ítem',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al rechazar ítem: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Finalizar y cerrar la recepción de la orden de compra.
+     * POST /api/ordenes-compra/{id}/cerrar-recepcion
+     */
+    public function cerrarRecepcion(Request $request, string $id): JsonResponse
+    {
+        try {
+            $generarNuevaOc = $request->boolean('generar_nueva_oc_faltantes', false);
+            $orden = $this->ordenCompraService->cerrarRecepcion($id, $generarNuevaOc);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Recepción de la orden {$id} cerrada con éxito.",
+                'data' => new OrdenCompraResource($orden),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error de validación al cerrar recepción',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al cerrar recepción: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Anular una recepción revirtiendo las existencias en Kárdex.
+     * POST /api/ordenes-compra/{id}/anular-recepcion
+     */
+    public function anularRecepcion(Request $request, string $id): JsonResponse
+    {
+        try {
+            $request->validate([
+                'motivo' => 'required|string|min:10|max:250',
+            ], [
+                'motivo.required' => 'El motivo de anulación es obligatorio.',
+                'motivo.min' => 'El motivo debe tener al menos 10 caracteres explicativos.',
+            ]);
+
+            $motivo = $request->input('motivo');
+            $orden = $this->ordenCompraService->anularRecepcion($id, $motivo);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Recepción de la orden {$id} anulada y stock revertido en Kárdex.",
+                'data' => new OrdenCompraResource($orden),
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error de validación al anular recepción',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al anular recepción: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Registrar una compra rápida a PYME Vecina con ingreso inmediato a Kárdex.
+     * POST /api/ordenes-compra/compra-rapida
+     */
+    public function compraRapida(Request $request): JsonResponse
+    {
+        try {
+            // Normalizar si la petición viene con campos planos en vez de array anidado detalles
+            if ($request->has('producto_id') && !$request->has('detalles')) {
+                $request->merge([
+                    'detalles' => [
+                        [
+                            'producto_id' => $request->input('producto_id'),
+                            'cantidad' => $request->input('cantidad'),
+                            'precio_unitario' => $request->input('precio_unitario', 0),
+                            'unidad_medida_id' => $request->input('unidad_medida_id', 'UND-00001'),
+                        ]
+                    ],
+                    'observaciones' => $request->input('motivo', $request->input('observaciones')),
+                ]);
+            }
+
+            $validated = $request->validate([
+                'detalles' => 'required|array|min:1',
+                'detalles.*.producto_id' => 'required|string|exists:Producto,ProductoId',
+                'detalles.*.cantidad' => 'required|numeric|gt:0',
+                'detalles.*.precio_unitario' => 'nullable|numeric|min:0',
+                'detalles.*.unidad_medida_id' => 'nullable|string',
+                'pedido_id' => 'nullable|string',
+                'observaciones' => 'nullable|string|max:250',
+            ]);
+
+            $orden = $this->ordenCompraService->crearCompraRapida($validated);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Compra rápida {$orden->Orden_CompraId} registrada exitosamente e ingresada a almacén.",
+                'data' => new OrdenCompraResource($orden),
+            ], 201);
+        } catch (ValidationException $e) {
+            $msg = collect($e->errors())->flatten()->first() ?: 'Error de validación en compra rápida';
+            return response()->json([
+                'success' => false,
+                'message' => $msg,
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al procesar compra rápida: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Consultar historial de recepción y asientos de Kárdex asociados.
+     * GET /api/ordenes-compra/{id}/historial-recepcion
+     */
+    public function historialRecepcion(string $id): JsonResponse
+    {
+        try {
+            $historial = $this->ordenCompraService->obtenerHistorialRecepcion($id);
+
+            return response()->json([
+                'success' => true,
+                'data' => $historial,
+                'message' => 'Historial de recepción obtenido correctamente.',
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener historial: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
 
     /**
      * Restaurar una orden de compra eliminada lógicamente.

@@ -23,9 +23,14 @@ class OrdenCompra extends Model
         'Orden_CompraSubtotal',
         'Orden_CompraIgv',
         'Orden_CompraTotal',
-        'Orden_CompraEstado', // 'P' = Pendiente, 'C' = Completada/Recibida, 'A' = Anulada
+        'Orden_CompraEstado', // BORRADOR, ENVIADA, PENDIENTE_RECEPCION, EN_RECEPCION, CERRADA, CERRADA_CON_FALTANTE, ANULADA, CANCELADA_PROVEEDOR
         'Orden_CompraObservacion',
         'Orden_Compra_ProveedorId',
+        'Orden_CompraFechaEstimadaLlegada',
+        'Orden_CompraFechaRecepcionReal',
+        'Orden_CompraMotivoAnulacion',
+        'Orden_CompraUsuarioRecepcionId',
+        'Orden_CompraCerradaConFaltante',
         'Orden_CompraEliminado',
         'Orden_CompraUsuarioCreacion',
         'Orden_CompraHostCreacion',
@@ -40,6 +45,8 @@ class OrdenCompra extends Model
 
     protected $casts = [
         'Orden_CompraFecha' => 'datetime',
+        'Orden_CompraFechaEstimadaLlegada' => 'datetime',
+        'Orden_CompraFechaRecepcionReal' => 'datetime',
         'Orden_CompraSubtotal' => 'float',
         'Orden_CompraIgv' => 'float',
         'Orden_CompraTotal' => 'float',
@@ -74,16 +81,25 @@ class OrdenCompra extends Model
     }
 
     /**
-     * Scope para filtrar por estado ('P', 'C', 'A')
-     */
-
-    /**
-     * Scope para filtrar por estado ('P', 'C', 'A')
+     * Scope para filtrar por estado (soporta nombres canónicos y códigos legados)
      */
     public function scopePorEstado($query, ?string $estado)
     {
         if (!empty($estado)) {
-            return $query->where('Orden_CompraEstado', strtoupper($estado));
+            $estadoUpper = strtoupper(trim($estado));
+            return match ($estadoUpper) {
+                'EMITIDA', 'P', 'PENDIENTE', 'BORRADOR', 'ENVIADA', 'PENDIENTE_RECEPCION' => 
+                    $query->whereIn('Orden_CompraEstado', ['EMITIDA', 'PENDIENTE_RECEPCION', 'ENVIADA', 'BORRADOR', 'P', 'PENDIENTE']),
+                'RECEPCION_PARCIAL', 'EN_RECEPCION' => 
+                    $query->whereIn('Orden_CompraEstado', ['RECEPCION_PARCIAL', 'EN_RECEPCION']),
+                'CERRADA_CONFORME', 'CERRADA', 'C' => 
+                    $query->whereIn('Orden_CompraEstado', ['CERRADA_CONFORME', 'CERRADA', 'C']),
+                'CERRADA_CON_FALTANTE' => 
+                    $query->where('Orden_CompraEstado', 'CERRADA_CON_FALTANTE'),
+                'ANULADA', 'A', 'CANCELADA_PROVEEDOR' => 
+                    $query->whereIn('Orden_CompraEstado', ['ANULADA', 'A', 'CANCELADA_PROVEEDOR']),
+                default => $query->where('Orden_CompraEstado', $estadoUpper),
+            };
         }
         return $query;
     }

@@ -5,354 +5,304 @@
     <title>Orden de Compra - {{ $orden->Orden_CompraId }}</title>
     <style>
         @page {
-            margin: 15mm 15mm 15mm 15mm;
+            margin: 12mm 15mm 15mm 15mm;
+            size: A4 portrait;
         }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: "Courier New", Courier, monospace;
             font-size: 11px;
-            color: #1e293b;
-            line-height: 1.4;
+            color: #000000;
+            line-height: 1.25;
             background-color: #ffffff;
             margin: 0;
             padding: 0;
         }
 
-        /* Contenedor tipo Tarjeta Web */
-        .card-container {
-            border: 1px solid #e2e8f0;
-            border-radius: 12px;
-            padding: 24px;
-            background-color: #ffffff;
-        }
-
-        /* Encabezado */
-        .header-table {
+        /* 1. Cabecera Superior: Código de Barras y Metadatos */
+        .top-meta-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
         }
-        .header-table td {
-            vertical-align: middle;
-        }
-        .company-title {
-            font-size: 18px;
-            font-weight: 800;
-            color: #0f172a;
-            letter-spacing: -0.3px;
-        }
-        .company-subtitle {
-            font-size: 10px;
-            color: #64748b;
-            margin-top: 2px;
-        }
-
-        .order-badge-box {
-            text-align: right;
-        }
-        .order-badge-title {
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
-            color: #64748b;
-            letter-spacing: 0.5px;
-        }
-        .order-badge-code {
-            font-size: 17px;
-            font-weight: 800;
-            color: #2563eb;
-            margin-top: 2px;
-        }
-        .order-badge-date {
-            font-size: 10px;
-            color: #64748b;
-            margin-top: 3px;
-        }
-
-        /* Mensaje formal */
-        .statement-banner {
-            font-size: 12px;
-            font-weight: 600;
-            color: #334155;
-            margin-bottom: 14px;
-            padding: 8px 12px;
-            background-color: #f8fafc;
-            border-left: 3px solid #2563eb;
-            border-radius: 0 6px 6px 0;
-        }
-
-        /* Ficha Proveedor (Estilo Web Modal) */
-        .info-card {
-            width: 100%;
-            border-collapse: collapse;
-            background-color: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            margin-bottom: 20px;
-        }
-        .info-card td {
-            padding: 10px 14px;
+        .top-meta-table td {
             vertical-align: top;
         }
-        .info-label {
-            font-size: 9.5px;
-            font-weight: 600;
-            text-transform: uppercase;
-            color: #64748b;
-            letter-spacing: 0.3px;
-            display: block;
-            margin-bottom: 3px;
+        .barcode-box {
+            text-align: left;
         }
-        .info-value {
-            font-size: 12px;
-            font-weight: 700;
-            color: #0f172a;
-        }
-
-        /* Badge de Estado */
-        .status-badge {
+        .barcode-bars {
             display: inline-block;
-            padding: 3px 10px;
+            font-size: 26px;
+            letter-spacing: 2px;
+            font-weight: normal;
+            line-height: 1;
+        }
+        .barcode-text {
             font-size: 10px;
-            font-weight: 700;
-            border-radius: 9999px;
-            text-transform: uppercase;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin-top: 2px;
         }
-        .status-P {
-            background-color: #fef3c7;
-            color: #b45309;
-            border: 1px solid #fde68a;
-        }
-        .status-C {
-            background-color: #dcfce7;
-            color: #15803d;
-            border: 1px solid #bbf7d0;
-        }
-        .status-A {
-            background-color: #fee2e2;
-            color: #b91c1c;
-            border: 1px solid #fecaca;
+        .meta-text-box {
+            text-align: right;
+            font-size: 10px;
+            line-height: 1.35;
         }
 
-        /* Tabla de Productos */
+        /* 2. Título Central */
+        .title-section {
+            text-align: center;
+            margin-bottom: 14px;
+        }
+        .title-text {
+            font-size: 15px;
+            font-weight: bold;
+            letter-spacing: 1px;
+            margin: 0 0 4px 0;
+            text-transform: uppercase;
+        }
+        .subtitle-text {
+            font-size: 11px;
+            font-weight: bold;
+            margin: 0;
+        }
+
+        /* 3. Ficha de la Entidad / Proveedor */
+        .entity-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 14px;
+            font-size: 11px;
+        }
+        .entity-table td {
+            padding: 1.5px 0;
+            vertical-align: top;
+        }
+        .lbl-bold {
+            font-weight: bold;
+        }
+
+        /* 4. Tabla de Productos Oficial */
         .items-table {
             width: 100%;
             border-collapse: collapse;
-            margin-bottom: 18px;
-            border: 1px solid #e2e8f0;
-            border-radius: 8px;
-            overflow: hidden;
+            font-size: 10.5px;
+            margin-bottom: 12px;
+        }
+        .items-table thead tr {
+            border-top: 1px solid #000000;
+            border-bottom: 2px solid #000000;
         }
         .items-table th {
-            background-color: #f1f5f9;
-            color: #475569;
-            font-size: 9.5px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.4px;
-            padding: 9px 10px;
-            border-bottom: 1px solid #cbd5e1;
+            padding: 5px 4px;
+            font-weight: bold;
+            text-align: left;
         }
         .items-table td {
-            padding: 8px 10px;
-            font-size: 10.5px;
-            border-bottom: 1px solid #f1f5f9;
-            color: #334155;
-        }
-        .items-table tr:last-child td {
-            border-bottom: none;
-        }
-        .text-center { text-align: center; }
-        .text-right { text-align: right; }
-        .text-left { text-align: left; }
-
-        /* Resumen Financiero */
-        .summary-wrapper {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-        .summary-wrapper td {
+            padding: 4px 4px;
             vertical-align: top;
         }
-        .observation-box {
-            font-size: 10px;
-            color: #475569;
-            background-color: #f8fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 6px;
-            padding: 8px 12px;
-            margin-right: 20px;
+        .items-table tbody tr.border-bottom-final {
+            border-bottom: 1px solid #000000;
         }
+        .text-right { text-align: right; }
+        .text-center { text-align: center; }
+        .text-left { text-align: left; }
+
+        /* 5. Totales a la Derecha */
         .totals-table {
             width: 100%;
             border-collapse: collapse;
+            margin-top: 6px;
+            font-size: 11px;
         }
         .totals-table td {
-            padding: 4px 8px;
-            font-size: 11px;
+            padding: 2px 4px;
+        }
+        .totals-label {
             text-align: right;
+            font-weight: bold;
+            width: 82%;
         }
-        .totals-table .total-label {
-            color: #64748b;
-            font-weight: 500;
-        }
-        .totals-table .total-amount {
-            color: #0f172a;
-            font-weight: 700;
-        }
-        .totals-table tr.grand-total td {
-            font-size: 14px;
-            font-weight: 800;
-            color: #0f172a;
-            border-top: 2px solid #e2e8f0;
-            padding-top: 8px;
-            padding-bottom: 8px;
-        }
-        .totals-table tr.grand-total .total-amount {
-            color: #2563eb;
+        .totals-val {
+            text-align: right;
+            font-weight: bold;
+            width: 18%;
         }
 
-        /* Pie de página */
-        .footer {
-            margin-top: 30px;
-            padding-top: 12px;
-            border-top: 1px solid #f1f5f9;
-            text-align: center;
-            font-size: 9px;
-            color: #94a3b8;
+        /* Observaciones al pie */
+        .obs-box {
+            margin-top: 20px;
+            padding-top: 8px;
+            border-top: 1px dashed #666666;
+            font-size: 9.5px;
+            color: #333333;
         }
     </style>
 </head>
 <body>
-    <div class="card-container">
 @php
     $emp = $empresa ?? \App\Models\Empresa::getDatos();
     $nombreEmpresa = $emp?->EmpresaNombreComercial ?: ($emp?->EmpresaRazonSocial ?: 'COMERCIAL VALENCIA');
     $rucEmpresa = $emp?->EmpresaRuc ?: '10181935451';
-    $telEmpresa = $emp?->EmpresaTelefono ?: ($emp?->EmpresaWhatsapp ?: '(01) 456-7890');
-    $dirEmpresa = $emp?->EmpresaDireccion ?: 'Av. Principal 123, Lima - Perú';
+    $dirEmpresa = $emp?->EmpresaDireccion ?: 'Av. Principal America 178';
+
+    $prov = $orden->proveedor;
+    $provNombre = $prov?->ProveedorRazonSocial ?: $nombreEmpresa;
+    $provRuc = $prov?->ProveedorRuc ?: $rucEmpresa;
+    $provDir = $prov?->ProveedorDireccion ?: $dirEmpresa;
+
+    $fechaDoc = $orden->Orden_CompraFecha ? $orden->Orden_CompraFecha->format('Y-m-d') : now()->format('Y-m-d');
+    $usuario = $orden->Orden_CompraUsuarioCreacion ?: 'ADMIN';
+    $fechaImpresion = now()->translatedFormat('d M Y, h:i:s a');
+
+    $subtotal = (float) ($orden->Orden_CompraSubtotal ?? 0);
+    $igv = (float) ($orden->Orden_CompraIgv ?? 0);
+    $total = (float) ($orden->Orden_CompraTotal ?? 0);
+    if ($total > 0 && $subtotal == 0) {
+        $subtotal = round($total / 1.18, 2);
+        $igv = round($total - $subtotal, 2);
+    }
 @endphp
-        <!-- Encabezado -->
-        <table class="header-table">
-            <tr>
-                <td style="width: 60%;">
-                    <div class="company-title">{{ $nombreEmpresa }}</div>
-                    <div class="company-subtitle">
-                        RUC: {{ $rucEmpresa }} &nbsp;•&nbsp; Tel: {{ $telEmpresa }}<br>
-                        {{ $dirEmpresa }}
-                    </div>
-                </td>
-                <td style="width: 40%;" class="order-badge-box">
-                    <div class="order-badge-title">Orden de Compra</div>
-                    <div class="order-badge-code">{{ $orden->Orden_CompraId }}</div>
-                    <div class="order-badge-date">
-                        Fecha: {{ $orden->Orden_CompraFecha ? $orden->Orden_CompraFecha->format('d/m/Y H:i') : now()->format('d/m/Y') }}
-                    </div>
-                </td>
-            </tr>
-        </table>
 
-        <!-- Frase Formal -->
-        <div class="statement-banner">
-            Solicito a usted la atención del siguiente pedido de compra:
-        </div>
+    <!-- 1. CÓDIGO DE BARRAS Y METADATOS SUPERIORES -->
+    <table class="top-meta-table">
+        <tr>
+            <td style="width: 50%;" class="barcode-box">
+                <!-- Representación limpia de barras vectoriales -->
+                <svg height="26" width="160" style="display:block;">
+                    <rect x="0" y="0" width="3" height="26" fill="black" />
+                    <rect x="5" y="0" width="1" height="26" fill="black" />
+                    <rect x="8" y="0" width="4" height="26" fill="black" />
+                    <rect x="14" y="0" width="2" height="26" fill="black" />
+                    <rect x="18" y="0" width="1" height="26" fill="black" />
+                    <rect x="22" y="0" width="3" height="26" fill="black" />
+                    <rect x="27" y="0" width="2" height="26" fill="black" />
+                    <rect x="31" y="0" width="1" height="26" fill="black" />
+                    <rect x="35" y="0" width="4" height="26" fill="black" />
+                    <rect x="42" y="0" width="2" height="26" fill="black" />
+                    <rect x="46" y="0" width="3" height="26" fill="black" />
+                    <rect x="51" y="0" width="1" height="26" fill="black" />
+                    <rect x="55" y="0" width="2" height="26" fill="black" />
+                    <rect x="60" y="0" width="4" height="26" fill="black" />
+                    <rect x="66" y="0" width="1" height="26" fill="black" />
+                    <rect x="70" y="0" width="3" height="26" fill="black" />
+                    <rect x="75" y="0" width="2" height="26" fill="black" />
+                    <rect x="80" y="0" width="1" height="26" fill="black" />
+                    <rect x="84" y="0" width="3" height="26" fill="black" />
+                    <rect x="89" y="0" width="2" height="26" fill="black" />
+                    <rect x="94" y="0" width="4" height="26" fill="black" />
+                    <rect x="100" y="0" width="1" height="26" fill="black" />
+                    <rect x="104" y="0" width="2" height="26" fill="black" />
+                    <rect x="108" y="0" width="4" height="26" fill="black" />
+                    <rect x="114" y="0" width="1" height="26" fill="black" />
+                    <rect x="118" y="0" width="3" height="26" fill="black" />
+                </svg>
+                <div class="barcode-text">*{{ $orden->Orden_CompraId }}*</div>
+            </td>
+            <td style="width: 50%;" class="meta-text-box">
+                <div>Página: 1 de 1</div>
+                <div>Impreso: {{ $fechaImpresion }}</div>
+                <div>Usuario: {{ $usuario }}</div>
+            </td>
+        </tr>
+    </table>
 
-        <!-- Ficha de Datos del Proveedor y Estado (Igual que en la interfaz web) -->
-        <table class="info-card">
-            <tr>
-                <td style="width: 40%;">
-                    <span class="info-label">Proveedor:</span>
-                    <span class="info-value">{{ $orden->proveedor?->ProveedorRazonSocial ?? 'Por asignar' }}</span>
-                </td>
-                <td style="width: 25%;">
-                    <span class="info-label">RUC:</span>
-                    <span class="info-value">{{ $orden->proveedor?->ProveedorRuc ?? '-' }}</span>
-                </td>
-                <td style="width: 20%;">
-                    <span class="info-label">Teléfono:</span>
-                    <span class="info-value">+51 {{ $orden->proveedor?->ProveedorTelefono ?? '-' }}</span>
-                </td>
-                <td style="width: 15%;" class="text-right">
-                    <span class="info-label">Estado:</span>
-                    <div style="margin-top: 2px;">
-                        <span class="status-badge status-{{ $orden->Orden_CompraEstado }}">
-                            {{ $orden->Orden_CompraEstado === 'P' ? 'Pendiente' : ($orden->Orden_CompraEstado === 'C' ? 'Atendida' : 'Anulada') }}
-                        </span>
-                    </div>
-                </td>
-            </tr>
-        </table>
-
-        <!-- Tabla de Productos Solicitados -->
-        <table class="items-table">
-            <thead>
-                <tr>
-                    <th style="width: 45%;" class="text-left">Producto</th>
-                    <th style="width: 15%;" class="text-center">Unidad</th>
-                    <th style="width: 12%;" class="text-center">Cantidad</th>
-                    <th style="width: 14%;" class="text-right">P. Unitario</th>
-                    <th style="width: 14%;" class="text-right">Subtotal</th>
-                </tr>
-            </thead>
-            <tbody>
-                @foreach($orden->detalles as $item)
-                <tr>
-                    <td class="text-left">
-                        <strong style="color: #0f172a;">{{ $item->producto?->ProductoNombre ?? 'Producto no especificado' }}</strong>
-                        @if(!empty($item->producto?->ProductoMarca))
-                            <span style="font-size: 9px; color: #64748b;"> ({{ $item->producto->ProductoMarca }})</span>
-                        @endif
-                    </td>
-                    <td class="text-center" style="color: #475569;">
-                        {{ $item->unidadMedida?->unidades_medidaAbreviatura ?? ($item->unidadMedida?->unidades_medidaDescripcionUnidades ?? 'UND') }}
-                    </td>
-                    <td class="text-center" style="font-weight: 700; color: #0f172a;">
-                        {{ number_format($item->Detalle_Orden_CompraCantidad, 2) }}
-                    </td>
-                    <td class="text-right" style="color: #475569;">
-                        S/ {{ number_format($item->Detalle_Orden_CompraPrecioUnitario, 2) }}
-                    </td>
-                    <td class="text-right" style="font-weight: 700; color: #0f172a;">
-                        S/ {{ number_format($item->Detalle_Orden_CompraSubtotal, 2) }}
-                    </td>
-                </tr>
-                @endforeach
-            </tbody>
-        </table>
-
-        <!-- Resumen Financiero y Observación -->
-        <table class="summary-wrapper">
-            <tr>
-                <td style="width: 55%;">
-                    @if(!empty($orden->Orden_CompraObservacion) && !str_contains($orden->Orden_CompraObservacion, 'WhatsApp enviado'))
-                        <div class="observation-box">
-                            <strong>Observación:</strong> {{ $orden->Orden_CompraObservacion }}
-                        </div>
-                    @endif
-                </td>
-                <td style="width: 45%;">
-                    <table class="totals-table">
-                        <tr>
-                            <td class="total-label">Subtotal:</td>
-                            <td class="total-amount">S/ {{ number_format($orden->Orden_CompraSubtotal, 2) }}</td>
-                        </tr>
-                        <tr>
-                            <td class="total-label">IGV (18%):</td>
-                            <td class="total-amount">S/ {{ number_format($orden->Orden_CompraIgv, 2) }}</td>
-                        </tr>
-                        <tr class="grand-total">
-                            <td class="total-label" style="font-weight: 800; color: #0f172a;">TOTAL:</td>
-                            <td class="total-amount">S/ {{ number_format($orden->Orden_CompraTotal, 2) }}</td>
-                        </tr>
-                    </table>
-                </td>
-            </tr>
-        </table>
-
-        <!-- Pie de página simplificado y moderno -->
-        <div class="footer">
-            Emitido el {{ now()->format('d/m/Y H:i') }} &nbsp;•&nbsp; {{ $nombreEmpresa }} &nbsp;•&nbsp; Documento Oficial de Solicitud de Compra
-        </div>
+    <!-- 2. TÍTULO CENTRAL -->
+    <div class="title-section">
+        <h1 class="title-text">ORDEN DE COMPRA</h1>
+        <div class="subtitle-text">FECHA: {{ $fechaDoc }} &nbsp;&nbsp;&nbsp;&nbsp; Nº: {{ $orden->Orden_CompraId }}</div>
     </div>
+
+    <!-- 3. DATOS DE LA ENTIDAD / PROVEEDOR -->
+    <table class="entity-table">
+        <tr>
+            <td style="width: 70%;">
+                <span class="lbl-bold">Señores:</span> {{ $provNombre }}
+            </td>
+            <td style="width: 30%; text-align: right;">
+                <span class="lbl-bold">Fecha:</span> {{ $fechaDoc }}
+            </td>
+        </tr>
+        <tr>
+            <td>
+                <span class="lbl-bold">R.U.C.:</span> {{ $provRuc }}
+            </td>
+            <td style="text-align: right;">
+                <span class="lbl-bold">{{ $usuario }}</span>
+            </td>
+        </tr>
+        <tr>
+            <td colspan="2">
+                <span class="lbl-bold">Dirección:</span> {{ $provDir }}
+            </td>
+        </tr>
+    </table>
+
+    <!-- 4. TABLA EXACTA DEL FORMATO FÍSICO OFICIAL -->
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th style="width: 15%;">CODIGO</th>
+                <th style="width: 9%; text-align: right;">CANTID</th>
+                <th style="width: 12%; text-align: left;">MEDIDA</th>
+                <th style="width: 36%;">DESCRIPCION DEL PRODUCTO</th>
+                <th style="width: 6%; text-align: center;">SUC</th>
+                <th style="width: 11%; text-align: right;">PRECIO</th>
+                <th style="width: 11%; text-align: right;">TOTAL</th>
+            </tr>
+        </thead>
+        <tbody>
+        @forelse($orden->detalles as $index => $det)
+            @php
+                $esUltimo = $loop->last;
+                $cant = (float) $det->Detalle_Orden_CompraCantidad;
+                $precio = (float) $det->Detalle_Orden_CompraPrecioUnitario;
+                $tot = (float) ($det->Detalle_Orden_CompraSubtotal ?? ($cant * $precio));
+                $abrev = $det->unidadMedida?->unidades_medidaAbreviatura ?? 'UND';
+                $prod = $det->producto;
+                $nombreProd = strtoupper($prod?->ProductoNombre ?? 'PRODUCTO');
+                if (!empty($prod?->ProductoMarca)) {
+                    $nombreProd .= ' - ' . strtoupper($prod->ProductoMarca);
+                }
+            @endphp
+            <tr class="{{ $esUltimo ? 'border-bottom-final' : '' }}">
+                <td class="text-left">{{ $det->Detalle_ProductoId }}</td>
+                <td class="text-right">{{ number_format($cant, 2) }}</td>
+                <td class="text-left">{{ strtoupper($abrev) }}</td>
+                <td class="text-left">{{ $nombreProd }}</td>
+                <td class="text-center">AC</td>
+                <td class="text-right">{{ number_format($precio, 2) }}</td>
+                <td class="text-right">{{ number_format($tot, 2) }}</td>
+            </tr>
+        @empty
+            <tr class="border-bottom-final">
+                <td colspan="7" class="text-center" style="padding: 12px 0;">--- Sin ítems registrados en esta orden ---</td>
+            </tr>
+        @endforelse
+        </tbody>
+    </table>
+
+    <!-- 5. TOTALES EXACTOS ESCALONADOS A LA DERECHA -->
+    <table class="totals-table">
+        <tr>
+            <td class="totals-label">TOTAL:</td>
+            <td class="totals-val">{{ number_format($subtotal, 2) }}</td>
+        </tr>
+        <tr>
+            <td class="totals-label">TOTAL IGV:</td>
+            <td class="totals-val">{{ number_format($igv, 2) }}</td>
+        </tr>
+        <tr>
+            <td class="totals-label">TOTAL GENERAL:</td>
+            <td class="totals-val">{{ number_format($total, 2) }}</td>
+        </tr>
+    </table>
+
+    @if(!empty($orden->Orden_CompraObservacion))
+    <div class="obs-box">
+        <strong>Observaciones / Instrucciones:</strong> {{ $orden->Orden_CompraObservacion }}
+    </div>
+    @endif
 </body>
 </html>

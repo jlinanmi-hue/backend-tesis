@@ -132,4 +132,48 @@ class DashboardController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Nivel 3: Comparación de subgráficos y KPIs entre dos períodos (A y B)
+     * GET /api/dashboard/compare
+     */
+    public function compare(Request $request): JsonResponse
+    {
+        try {
+            $indicatorId = (int) $request->query('indicator_id', 1);
+            if (!in_array($indicatorId, [1, 2, 3, 4], true)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El indicator_id debe ser 1 (PODE), 2 (PEOR), 3 (PRS) o 4 (TBPP).',
+                ], 422);
+            }
+
+            $paramA = [
+                'periodo' => $request->query('periodo_a'),
+                'inicio'  => $request->query('inicio_a'),
+                'fin'     => $request->query('fin_a'),
+            ];
+
+            $paramB = [
+                'periodo' => $request->query('periodo_b'),
+                'inicio'  => $request->query('inicio_b'),
+                'fin'     => $request->query('fin_b'),
+            ];
+
+            $filters = $request->only(['canal', 'categoria', 'operario']);
+
+            $data = $this->service->comparePeriods($indicatorId, $paramA, $paramB, $filters);
+
+            return response()->json([
+                'success' => true,
+                'data'    => $data,
+                'message' => 'Comparativa de subgráficos obtenida exitosamente.',
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al calcular comparativa de indicadores: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

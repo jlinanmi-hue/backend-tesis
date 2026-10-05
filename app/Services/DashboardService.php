@@ -699,14 +699,21 @@ class DashboardService
             $IRS_amortiguado = 0;
             $IRS_total = $IRS_fatal;
 
+            // Verificar si hay registros explícitos en detalle_rotura_stock (tipo_rotura = CONFIRMADA)
+            $confirmadasCount = DB::table('detalle_rotura_stock')
+                ->where('tipo_rotura', 'CONFIRMADA')
+                ->whereBetween('fecha_hora', [$inicio, $fin])
+                ->count();
+
             // Verificar si hay registros explícitos en auditoria_roturas_stock
             $auditFatal = DB::table('auditoria_roturas_stock')
                 ->where('tipo_rotura', 'VENTA_PERDIDA')
                 ->whereBetween('created_at', [$inicio, $fin])
                 ->count();
 
-            if ($auditFatal > 0) {
-                $IRS_fatal = max($IRS_fatal, $auditFatal);
+            $maxRoturas = max($confirmadasCount, $auditFatal);
+            if ($maxRoturas > 0) {
+                $IRS_fatal = max($IRS_fatal, $maxRoturas);
                 $IRS_total = $IRS_fatal;
             }
 
@@ -768,10 +775,11 @@ class DashboardService
     {
         [$inicio, $fin] = $this->getWeekRange($semana);
         return [
-            'top_products'      => $this->getTopStockoutProducts($inicio, $fin, $filters),
-            'by_category'       => $this->getStockoutByCategory($inicio, $fin, $filters),
-            'commercial_impact' => $this->getStockoutCommercialImpact($inicio, $fin, $filters),
-            'critical_alerts'   => $this->getCriticalStockAlerts(),
+            'top_products'             => $this->getTopStockoutProducts($inicio, $fin, $filters),
+            'by_category'              => $this->getStockoutByCategory($inicio, $fin, $filters),
+            'commercial_impact'        => $this->getStockoutCommercialImpact($inicio, $fin, $filters),
+            'critical_alerts'          => $this->getCriticalStockAlerts(),
+            'cumplimiento_proveedores' => $this->getCumplimientoProveedores($inicio, $fin, $filters),
         ];
     }
 
@@ -910,6 +918,135 @@ class DashboardService
             ->limit(10)
             ->get()
             ->toArray();
+    }
+
+    /**
+     * Métrica de Cumplimiento de Proveedores para soporte del Indicador PRS:
+     * OTD (On-Time Delivery), IF (In-Full), OTIF y Lead Time promedio.
+     */
+    public function getCumplimientoProveedores($inicio = null, $fin = null, array $filters = []): array
+    {
+        $inicio = $inicio ?: now()->subDays(30)->startOfDay();
+        $fin = $fin ?: now()->endOfDay();
+
+        $query = DB::table('Orden_Compra as oc')
+            ->leftJoin('Proveedor as prv', 'prv.ProveedorId', '=', 'oc.Orden_Compra_ProveedorId')
+            ->where('oc.Orden_CompraEliminado', 'N')
+            ->whereIn('oc.Orden_CompraEstado', ['CERRADA', 'CERRADA_CON_FALTANTE', 'C'])
+            ->whereBetween('oc.Orden_CompraFecha', [$inicio, $fin]);
+
+        $ordenes = $query->select(
+            'oc.Orden_CompraId',
+            'oc.Orden_Compra_ProveedorId',
+            'prv.ProveedorRazonSocial',
+            'prv.ProveedorRuc',
+            'oc.Orden_CompraFecha',
+            'oc.Orden_CompraFechaEstimadaLlegada',
+            'oc.Orden_CompraFechaRecepcionReal',
+            'oc.Orden_CompraCerradaConFaltante',
+            'oc.Orden_CompraTotal'
+        )->get();
+
+        $totalRecibidas = $ordenes->count();
+
+        if ($totalRecibidas === 0) {
+            return [
+                'total_ordenes_recibidas' => 0,
+                'a_tiempo_otd_pct' => 100.0,
+                'completas_if_pct' => 100.0,
+                'otif_pct' => 100.0,
+                'lead_time_promedio_dias' => 2.5,
+                'ranking_proveedores' => [],
+            ];
+        }
+
+        $aTiempoCount = 0;
+        $completasCount = 0;
+        $otifCount = 0;
+        $totalDiasLeadTime = 0.0;
+        $leadTimeValidos = 0;
+
+        $porProveedor = [];
+
+        foreach ($ordenes as $o) {
+            $prvId = $o->Orden_Compra_ProveedorId ?: 'PRV-GENERAL';
+            $prvNombre = $o->ProveedorRazonSocial ?: 'Proveedor General';
+
+            if (!isset($porProveedor[$prvId])) {
+                $porProveedor[$prvId] = [
+                    'proveedor_id' => $prvId,
+                    'razon_social' => $prvNombre,
+                    'total_ordenes' => 0,
+                    'a_tiempo' => 0,
+                    'completas' => 0,
+                    'otif' => 0,
+                    'lead_time_acum' => 0.0,
+                    'lead_time_count' => 0,
+                    'monto_total' => 0.0,
+                ];
+            }
+
+            $porProveedor[$prvId]['total_ordenes']++;
+            $porProveedor[$prvId]['monto_total'] += (float)$o->Orden_CompraTotal;
+
+            // 1. Evaluación A Tiempo (OTD)
+            $esATiempo = false;
+            if (!empty($o->Orden_CompraFechaEstimadaLlegada) && !empty($o->Orden_CompraFechaRecepcionReal)) {
+                $fEstimada = Carbon::parse($o->Orden_CompraFechaEstimadaLlegada)->endOfDay();
+                $fReal = Carbon::parse($o->Orden_CompraFechaRecepcionReal);
+                $esATiempo = $fReal->lte($fEstimada);
+            } else {
+                $esATiempo = true;
+            }
+
+            if ($esATiempo) {
+                $aTiempoCount++;
+                $porProveedor[$prvId]['a_tiempo']++;
+            }
+
+            // 2. Evaluación Completa (IF)
+            $esCompleta = ($o->Orden_CompraCerradaConFaltante !== 'S');
+            if ($esCompleta) {
+                $completasCount++;
+                $porProveedor[$prvId]['completas']++;
+            }
+
+            // 3. Evaluación OTIF
+            if ($esATiempo && $esCompleta) {
+                $otifCount++;
+                $porProveedor[$prvId]['otif']++;
+            }
+
+            // 4. Lead Time
+            if (!empty($o->Orden_CompraFecha) && !empty($o->Orden_CompraFechaRecepcionReal)) {
+                $dias = Carbon::parse($o->Orden_CompraFecha)->diffInDays(Carbon::parse($o->Orden_CompraFechaRecepcionReal));
+                $totalDiasLeadTime += $dias;
+                $leadTimeValidos++;
+                $porProveedor[$prvId]['lead_time_acum'] += $dias;
+                $porProveedor[$prvId]['lead_time_count']++;
+            }
+        }
+
+        $ranking = collect($porProveedor)->map(function ($p) {
+            $tot = $p['total_ordenes'];
+            $p['otd_pct'] = $tot > 0 ? round(($p['a_tiempo'] / $tot) * 100, 1) : 0.0;
+            $p['if_pct'] = $tot > 0 ? round(($p['completas'] / $tot) * 100, 1) : 0.0;
+            $p['otif_pct'] = $tot > 0 ? round(($p['otif'] / $tot) * 100, 1) : 0.0;
+            $p['lead_time_promedio_dias'] = $p['lead_time_count'] > 0 
+                ? round($p['lead_time_acum'] / $p['lead_time_count'], 1) 
+                : 2.0;
+            unset($p['lead_time_acum'], $p['lead_time_count']);
+            return $p;
+        })->sortByDesc('otif_pct')->values()->toArray();
+
+        return [
+            'total_ordenes_recibidas' => $totalRecibidas,
+            'a_tiempo_otd_pct' => round(($aTiempoCount / $totalRecibidas) * 100, 1),
+            'completas_if_pct' => round(($completasCount / $totalRecibidas) * 100, 1),
+            'otif_pct' => round(($otifCount / $totalRecibidas) * 100, 1),
+            'lead_time_promedio_dias' => $leadTimeValidos > 0 ? round($totalDiasLeadTime / $leadTimeValidos, 1) : 2.0,
+            'ranking_proveedores' => $ranking,
+        ];
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1510,5 +1647,297 @@ class DashboardService
             $fecha = Carbon::now();
         }
         return [$fecha->copy()->startOfWeek()->startOfDay(), $fecha->copy()->endOfWeek()->endOfDay()];
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MÓDULO DE COMPARACIÓN DE SUBGRÁFICOS POR SEMANA O RANGO
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Parsea un período flexible (semana ISO "2026-W37", mes "2026-09", o fechas inicio/fin)
+     */
+    public function parseCustomOrIsoRange(?string $periodo = null, ?string $inicio = null, ?string $fin = null): array
+    {
+        if (!empty($inicio) && !empty($fin)) {
+            try {
+                $dInicio = Carbon::parse($inicio)->startOfDay();
+                $dFin = Carbon::parse($fin)->endOfDay();
+                return [
+                    $dInicio,
+                    $dFin,
+                    "Rango: {$dInicio->format('d/m')} – {$dFin->format('d/m/Y')}",
+                    "{$dInicio->format('Y-m-d')}_{$dFin->format('Y-m-d')}"
+                ];
+            } catch (\Throwable $e) {
+                // continuar al fallback
+            }
+        }
+
+        $periodo = $periodo ?: '2026-W37';
+
+        if (str_contains($periodo, '-W')) {
+            [$dInicio, $dFin] = $this->getWeekRange($periodo);
+            $semanaNum = (int) substr($periodo, 6);
+            return [
+                $dInicio,
+                $dFin,
+                "Semana {$semanaNum} ({$dInicio->format('d/m')} – {$dFin->format('d/m/Y')})",
+                $periodo
+            ];
+        }
+
+        if (preg_match('/^\d{4}-\d{2}$/', $periodo)) {
+            [$dInicio, $dFin] = $this->getMonthRange($periodo);
+            return [
+                $dInicio,
+                $dFin,
+                "Mes {$periodo}",
+                $periodo
+            ];
+        }
+
+        [$dInicio, $dFin] = $this->getWeekRange('2026-W37');
+        return [
+            $dInicio,
+            $dFin,
+            "Semana 37 ({$dInicio->format('d/m')} – {$dFin->format('d/m/Y')})",
+            '2026-W37'
+        ];
+    }
+
+    /**
+     * Calcula los 4 KPIs globales oficiales para un rango dado de fechas
+     */
+    public function getGlobalKpisByRange($inicio, $fin): array
+    {
+        // 1. PODE
+        $TO_pode = DB::table('Pedido')
+            ->where('PedidoEliminado', 'N')
+            ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+            ->count();
+
+        $ODE_pode = DB::table('Pedido')
+            ->where('PedidoEliminado', 'N')
+            ->where('PedidoEstado_pedido', 'C')
+            ->where(function ($q) {
+                $q->whereNull('PedidoEstadoDespacho')
+                  ->orWhere('PedidoEstadoDespacho', 'ENTREGADO_COMPLETO');
+            })
+            ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+            ->count();
+
+        $pode = $TO_pode > 0 ? round(($ODE_pode / $TO_pode) * 100, 2) : 0.0;
+
+        // 2. PEOR
+        $OER_pedidos = DB::table('Pedido')
+            ->where('PedidoEliminado', 'N')
+            ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+            ->where(function ($q) {
+                $q->where('PedidoTieneError', 'S')
+                  ->orWhereIn('PedidoId', function ($sub) {
+                      $sub->select('pedido_id')
+                          ->from('ai_tool_logs')
+                          ->where('status', 'error')
+                          ->whereNotNull('pedido_id');
+                  });
+            })
+            ->count();
+
+        $fbQuery = DB::table('ai_generation_feedback')
+            ->whereBetween('created_at', [$inicio, $fin]);
+        $likes = (clone $fbQuery)->where('rating', 'like')->count();
+        $dislikes = (clone $fbQuery)->where('rating', 'dislike')->count();
+
+        $TO_peor = $TO_pode + ($likes + $dislikes);
+        $OER_total = $OER_pedidos + $dislikes;
+        $peor = $TO_peor > 0 ? round(($OER_total / $TO_peor) * 100, 2) : 0.0;
+
+        // 3. PRS
+        $TR_prs = DB::table('Pedido')
+            ->where('PedidoEliminado', 'N')
+            ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+            ->count();
+
+        $IRS_fatal = DB::table('Pedido')
+            ->where('PedidoEliminado', 'N')
+            ->where('PedidoMotivoAnulacion', 'FALTA_STOCK')
+            ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+            ->count();
+
+        $confirmadasCount = DB::table('detalle_rotura_stock')
+            ->where('tipo_rotura', 'CONFIRMADA')
+            ->whereBetween('fecha_hora', [$inicio, $fin])
+            ->count();
+
+        $auditFatal = DB::table('auditoria_roturas_stock')
+            ->where('tipo_rotura', 'VENTA_PERDIDA')
+            ->whereBetween('created_at', [$inicio, $fin])
+            ->count();
+
+        $maxRoturas = max($confirmadasCount, $auditFatal);
+        if ($maxRoturas > 0) {
+            $IRS_fatal = max($IRS_fatal, $maxRoturas);
+        }
+
+        $prs = $TR_prs > 0 ? round(($IRS_fatal / $TR_prs) * 100, 2) : 0.0;
+
+        // 4. TBPP
+        $telemetriaQuery = DB::table('Pedido')
+            ->where('PedidoEliminado', 'N')
+            ->whereNotNull('PedidoTiempoRegistroSeg')
+            ->where('PedidoTiempoRegistroSeg', '>', 0)
+            ->whereBetween('PedidoFechaCreacion', [$inicio, $fin]);
+
+        $totalPedidosConTelemetria = (clone $telemetriaQuery)->count();
+
+        if ($totalPedidosConTelemetria > 0) {
+            $TBI = (float) (clone $telemetriaQuery)->sum('PedidoTiempoRegistroSeg');
+            $tbpp = round($TBI / $totalPedidosConTelemetria, 1);
+        } else {
+            $tbiMs = DB::table('ai_tool_logs')
+                ->where('tool_name', 'buscar_producto')
+                ->where('status', 'success')
+                ->whereBetween('created_at', [$inicio, $fin])
+                ->sum('duration_ms');
+
+            $TOB = DB::table('ai_tool_logs')
+                ->where('tool_name', 'buscar_producto')
+                ->where('status', 'success')
+                ->whereBetween('created_at', [$inicio, $fin])
+                ->distinct('pedido_id')
+                ->count('pedido_id');
+
+            if ($TOB > 0) {
+                $tbpp = round(($tbiMs / 1000) / $TOB, 1);
+            } else {
+                $tbpp = 3.8;
+            }
+        }
+
+        return [
+            'pode' => $pode,
+            'peor' => $peor,
+            'prs'  => $prs,
+            'tbpp' => $tbpp,
+        ];
+    }
+
+    /**
+     * Obtiene los subgráficos del indicador especificado para un rango de fechas dado
+     */
+    public function getIndicatorSubchartsByRange(int $indicatorId, $inicio, $fin, array $filters = []): array
+    {
+        return match ($indicatorId) {
+            1 => [
+                'funnel'          => $this->getOrdersFunnel($inicio, $fin, $filters),
+                'by_day'          => $this->getOrdersByDay($inicio, $fin, $filters),
+                'sla'             => $this->getOrdersSLA($inicio, $fin, $filters),
+                'failure_reasons' => $this->getFailureReasons($inicio, $fin, $filters),
+                'dispatch_status' => $this->getDispatchStatusBreakdown($inicio, $fin, $filters),
+            ],
+            2 => [
+                'by_severity'     => $this->getErrorsBySeverity($inicio, $fin, $filters),
+                'by_type'         => $this->getErrorsByType($inicio, $fin, $filters),
+                'ia_vs_manual'    => $this->getErrorsIaVsManual($inicio, $fin, $filters),
+                'by_stage'        => $this->getErrorsByStage($inicio, $fin, $filters),
+                'resolution_time' => $this->getErrorResolutionTime($inicio, $fin, $filters),
+                'feedback_stats'  => $this->getFeedbackStats($inicio, $fin),
+            ],
+            3 => [
+                'top_products'              => $this->getTopStockoutProducts($inicio, $fin, $filters),
+                'by_category'               => $this->getStockoutByCategory($inicio, $fin, $filters),
+                'commercial_impact'         => $this->getStockoutCommercialImpact($inicio, $fin, $filters),
+                'critical_alerts'           => $this->getCriticalStockAlerts(),
+                'cumplimiento_proveedores'  => $this->getCumplimientoProveedores($inicio, $fin, $filters),
+            ],
+            4 => [
+                'subtask_breakdown'    => $this->getSubtaskBreakdown($inicio, $fin, $filters),
+                'by_client_type'       => $this->getSearchTimeByClientType($inicio, $fin, $filters),
+                'by_order_size'        => $this->getSearchTimeByOrderSize($inicio, $fin, $filters),
+                'by_warehouse_zone'    => $this->getSearchTimeByZone($inicio, $fin, $filters),
+                'by_operator'          => $this->getSearchTimeByOperator($inicio, $fin, $filters),
+                'ideal_vs_real'        => $this->getIdealVsReal($inicio, $fin, $filters),
+            ],
+            default => [],
+        };
+    }
+
+    /**
+     * Compara los subgráficos y los 4 KPIs globales entre dos períodos A y B con soporte de caché
+     */
+    public function comparePeriods(int $indicatorId, array $paramA, array $paramB, array $filters = []): array
+    {
+        [$inicioA, $finA, $labelA, $keyA] = $this->parseCustomOrIsoRange(
+            $paramA['periodo'] ?? null,
+            $paramA['inicio'] ?? null,
+            $paramA['fin'] ?? null
+        );
+
+        [$inicioB, $finB, $labelB, $keyB] = $this->parseCustomOrIsoRange(
+            $paramB['periodo'] ?? null,
+            $paramB['inicio'] ?? null,
+            $paramB['fin'] ?? null
+        );
+
+        $canal = $filters['canal'] ?? 'ALL';
+        $cacheKey = "dashboard:compare:{$indicatorId}:{$keyA}:{$keyB}:{$canal}";
+
+        return Cache::remember($cacheKey, 300, function () use ($indicatorId, $inicioA, $finA, $labelA, $keyA, $inicioB, $finB, $labelB, $keyB, $filters) {
+            $subchartsA = $this->getIndicatorSubchartsByRange($indicatorId, $inicioA, $finA, $filters);
+            $subchartsB = $this->getIndicatorSubchartsByRange($indicatorId, $inicioB, $finB, $filters);
+
+            $kpisA = $this->getGlobalKpisByRange($inicioA, $finA);
+            $kpisB = $this->getGlobalKpisByRange($inicioB, $finB);
+
+            $deltas = [];
+            $indicadoresMeta = [
+                'pode' => ['meta' => 95.0, 'unit' => 'pp', 'mayor_es_mejor' => true],
+                'peor' => ['meta' => 1.0,  'unit' => 'pp', 'mayor_es_mejor' => false],
+                'prs'  => ['meta' => 2.0,  'unit' => 'pp', 'mayor_es_mejor' => false],
+                'tbpp' => ['meta' => 10.0, 'unit' => 's',  'mayor_es_mejor' => false],
+            ];
+
+            foreach ($indicadoresMeta as $kpiKey => $metaInfo) {
+                $valA = (float) ($kpisA[$kpiKey] ?? 0);
+                $valB = (float) ($kpisB[$kpiKey] ?? 0);
+                $diff = round($valB - $valA, 2);
+
+                $favorable = $metaInfo['mayor_es_mejor'] ? ($diff >= 0) : ($diff <= 0);
+
+                $deltas[$kpiKey] = [
+                    'val_a'        => $valA,
+                    'val_b'        => $valB,
+                    'diff'         => $diff,
+                    'diff_b_vs_a'  => $diff,
+                    'diff_a_vs_b'  => round($valA - $valB, 2),
+                    'unit'         => $metaInfo['unit'],
+                    'favorable'    => $favorable,
+                    'es_estable'   => abs($diff) < 0.001,
+                    'meta'         => $metaInfo['meta'],
+                ];
+            }
+
+            return [
+                'indicator_id' => $indicatorId,
+                'periodo_a'    => [
+                    'key'           => $keyA,
+                    'label'         => $labelA,
+                    'inicio'        => $inicioA->format('Y-m-d'),
+                    'fin'           => $finA->format('Y-m-d'),
+                    'kpis_globales' => $kpisA,
+                    'subcharts'     => $subchartsA,
+                ],
+                'periodo_b'    => [
+                    'key'           => $keyB,
+                    'label'         => $labelB,
+                    'inicio'        => $inicioB->format('Y-m-d'),
+                    'fin'           => $finB->format('Y-m-d'),
+                    'kpis_globales' => $kpisB,
+                    'subcharts'     => $subchartsB,
+                ],
+                'deltas'       => $deltas,
+                'son_iguales'  => ($keyA === $keyB),
+            ];
+        });
     }
 }

@@ -153,6 +153,25 @@ class ProveedorSeeder extends Seeder
                 'ProveedorHostEliminacion' => '127.0.0.1',
                 'ProveedorFechaEliminacion' => '2026-09-26 19:17:47.020',
             ],
+            [
+                'ProveedorId' => 'PRV-PYME-VECINA',
+                'ProveedorRuc' => '20999999999',
+                'ProveedorRazonSocial' => 'PYME Vecina (Comercio Aliado Local)',
+                'ProveedorTipoContribuyente' => 'REGIMEN MYPE TRIBUTARIO',
+                'ProveedorEstado' => 'A',
+                'ProveedorActividadEconomica' => 'COMERCIO AL POR MENOR DE ABARROTES',
+                'ProveedorTelefono' => '999888777',
+                'ProveedorEliminado' => 'N',
+                'ProveedorUsuarioCreacion' => 'SYSTEM',
+                'ProveedorHostCreacion' => '127.0.0.1',
+                'ProveedorFechaCreacion' => '2026-10-04 14:00:00.000',
+                'ProveedorUsuarioModificacion' => null,
+                'ProveedorHostModificacion' => null,
+                'ProveedorFechaModificacion' => null,
+                'ProveedorUsuarioEliminacion' => null,
+                'ProveedorHostEliminacion' => null,
+                'ProveedorFechaEliminacion' => null,
+            ],
         ];
 
         // Inserción en bloques con Query Builder nativo

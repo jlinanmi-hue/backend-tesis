@@ -35,9 +35,9 @@ class OrdenCompraRepository implements OrdenCompraRepositoryInterface
             });
         }
 
-        // Filtro por Estado
+        // Filtro por Estado (soporta legados 'P', 'C', 'A' y ampliados)
         if (!empty($filters['estado'])) {
-            $query->where('Orden_CompraEstado', strtoupper($filters['estado']));
+            $query->porEstado($filters['estado']);
         }
 
         // Filtro por Proveedor

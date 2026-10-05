@@ -149,16 +149,13 @@ class PedidoService
 
                 if ($cantidadBase > $stockFisico) {
                     try {
-                        AuditoriaRoturaStock::create([
-                            'pedido_id'                  => null,
-                            'cantidad_solicitada'        => $cantidadBase,
-                            'cantidad_disponible_fisica' => $stockFisico,
-                            'deficit_unidades'           => round($cantidadBase - $stockFisico, 2),
-                            'tipo_rotura'                => 'VENTA_PERDIDA',
-                            'rompe_stock_seguridad'      => true,
-                            'categoria_id'               => $producto->Producto_Categoria_ProductoId,
-                            'usuario'                    => $datos['usuario_registro'] ?? auth()->user()?->UsuarioUsername ?? 'ADMIN',
-                            'created_at'                 => now(),
+                        app(RoturaStockService::class)->registrarIntento([
+                            'producto_id'         => $productoId,
+                            'cantidad_solicitada' => $cantidadBase,
+                            'cantidad_disponible' => $stockFisico,
+                            'cantidad_faltante'   => round($cantidadBase - $stockFisico, 2),
+                            'usuario'             => $datos['usuario_registro'] ?? auth()->user()?->UsuarioUsername ?? 'ADMIN',
+                            'observaciones'       => "Intento de pedido con stock insuficiente: solicitado {$cantidadBase}, disponible {$stockFisico}",
                         ]);
                     } catch (\Throwable $e) {}
 
@@ -759,20 +756,19 @@ class PedidoService
 
             $pedido = $this->pedidoRepository->update($id, $datosUpdate);
 
-            // Si es falta de stock, auditar en auditoria_roturas_stock
+            // Si es falta de stock, auditar en detalle_rotura_stock y auditoria_roturas_stock
             if ($esFaltaStock || $causaFallo === 'FALTA_STOCK') {
                 foreach ($pedido->detalles as $det) {
                     try {
-                        AuditoriaRoturaStock::create([
-                            'pedido_id'                  => $pedido->PedidoId,
-                            'cantidad_solicitada'        => (float) $det->Detalle_Pedido_Productos_cantidad,
-                            'cantidad_disponible_fisica' => 0.00,
-                            'deficit_unidades'           => (float) $det->Detalle_Pedido_Productos_cantidad,
-                            'tipo_rotura'                => 'VENTA_PERDIDA',
-                            'rompe_stock_seguridad'      => true,
-                            'categoria_id'               => $det->producto?->Producto_Categoria_ProductoId,
-                            'usuario'                    => auth()->user()?->UsuarioUsername ?? 'ADMIN',
-                            'created_at'                 => now(),
+                        app(RoturaStockService::class)->confirmarRotura([
+                            'pedido_id'           => $pedido->PedidoId,
+                            'detalle_pedido_id'   => $det->Detalle_Pedido_ProductosId,
+                            'producto_id'         => $det->Detalle_Pedido_Productos_ProductoId,
+                            'cantidad_solicitada' => (float) $det->Detalle_Pedido_Productos_cantidad,
+                            'cantidad_disponible' => 0.00,
+                            'cantidad_faltante'   => (float) $det->Detalle_Pedido_Productos_cantidad,
+                            'usuario'             => auth()->user()?->UsuarioUsername ?? 'ADMIN',
+                            'observaciones'       => "Cancelación de pedido {$pedido->PedidoId} por falta de stock",
                         ]);
                     } catch (\Throwable $e) {}
                 }

@@ -21,7 +21,10 @@ use Illuminate\Validation\ValidationException;
 class OrdenCompraService
 {
     public function __construct(
-        protected OrdenCompraRepositoryInterface $ordenCompraRepository
+        protected OrdenCompraRepositoryInterface $ordenCompraRepository,
+        protected InventarioService $inventarioService,
+        protected NotificacionService $notificacionService,
+        protected RoturaStockService $roturaStockService
     ) {}
 
     /**
@@ -56,15 +59,19 @@ class OrdenCompraService
 
     /**
      * Catálogo de estados permitidos para la orden de compra.
-     * NOTA: Este módulo es exclusivamente comercial y administrativo (gestión con el proveedor).
-     * No altera stock físico ni genera registros en el Kardex.
+     * Módulo formal de compras con impacto oficial en Kárdex durante la recepción.
      */
     public function obtenerEstados(): array
     {
         return [
-            ['codigo' => 'P', 'nombre' => 'Pendiente', 'descripcion' => 'Orden emitida y pendiente de atención por el proveedor'],
-            ['codigo' => 'C', 'nombre' => 'Completada', 'descripcion' => 'Orden de compra atendida por el proveedor'],
-            ['codigo' => 'A', 'nombre' => 'Anulada', 'descripcion' => 'Orden de compra cancelada / sin efecto'],
+            ['codigo' => 'BORRADOR', 'nombre' => 'Borrador', 'descripcion' => 'Orden de compra creada pero no enviada al proveedor'],
+            ['codigo' => 'ENVIADA', 'nombre' => 'Enviada', 'descripcion' => 'Orden enviada al proveedor, pendiente de confirmación de despacho'],
+            ['codigo' => 'PENDIENTE_RECEPCION', 'nombre' => 'Pendiente de Recepción', 'descripcion' => 'Proveedor confirmó despacho; almacén en espera de la mercadería'],
+            ['codigo' => 'EN_RECEPCION', 'nombre' => 'En Recepción', 'descripcion' => 'Logístico realizando conteo físico y recepción ítem por ítem en muelle'],
+            ['codigo' => 'CERRADA', 'nombre' => 'Cerrada', 'descripcion' => 'Recepción finalizada con el 100% de productos pedidos entregados'],
+            ['codigo' => 'CERRADA_CON_FALTANTE', 'nombre' => 'Cerrada con Faltante', 'descripcion' => 'Recepción finalizada con ítems no entregados o faltantes'],
+            ['codigo' => 'ANULADA', 'nombre' => 'Anulada', 'descripcion' => 'Orden de compra cancelada o recepción revertida en Kárdex'],
+            ['codigo' => 'CANCELADA_PROVEEDOR', 'nombre' => 'Cancelada por Proveedor', 'descripcion' => 'Proveedor no pudo atender o rechazó la orden de compra'],
         ];
     }
 
@@ -95,6 +102,31 @@ class OrdenCompraService
                 ]);
             }
 
+            // Validar estado inicial (Por defecto: EMITIDA)
+            $rawEstado = strtoupper(trim($datos['Orden_CompraEstado'] ?? $datos['estado'] ?? 'EMITIDA'));
+            $mapLegacy = [
+                'P' => 'EMITIDA',
+                'BORRADOR' => 'EMITIDA',
+                'ENVIADA' => 'EMITIDA',
+                'PENDIENTE_RECEPCION' => 'EMITIDA',
+                'EN_RECEPCION' => 'RECEPCION_PARCIAL',
+                'C' => 'CERRADA_CONFORME',
+                'CERRADA' => 'CERRADA_CONFORME',
+                'A' => 'ANULADA',
+                'CANCELADA_PROVEEDOR' => 'ANULADA',
+            ];
+            $estado = $mapLegacy[$rawEstado] ?? $rawEstado;
+            $estadosValidos = ['EMITIDA', 'RECEPCION_PARCIAL', 'CERRADA_CONFORME', 'CERRADA_CON_FALTANTE', 'ANULADA'];
+            if (!in_array($estado, $estadosValidos, true)) {
+                $estado = 'EMITIDA';
+            }
+
+            // Fecha estimada de llegada
+            $fechaEstimada = $datos['Orden_CompraFechaEstimadaLlegada'] ?? $datos['fecha_entrega_estimada'] ?? $datos['fecha_estimada_llegada'] ?? null;
+            if (empty($fechaEstimada)) {
+                $fechaEstimada = now()->addDays(2)->toDateTimeString();
+            }
+
             // Validar y calcular totales de detalles
             $subtotalCalculado = 0.00;
             $detallesProcesados = [];
@@ -111,7 +143,8 @@ class OrdenCompraService
                     ]);
                 }
 
-                $producto = Producto::where('ProductoId', $productoId)
+                $producto = Producto::with('detalleProductoMedidas')
+                    ->where('ProductoId', $productoId)
                     ->where('ProductoEliminado', 'N')
                     ->first();
 
@@ -121,10 +154,10 @@ class OrdenCompraService
                     ]);
                 }
 
-                if (empty($unidadId)) {
-                    // Fallback a la primera unidad de medida del sistema si no se especificó
-                    $unidad = UnidadesMedida::where('unidades_medidaEliminado', 'N')->first();
-                    $unidadId = $unidad ? $unidad->unidades_medidaId : 'UND-00001';
+                if (empty($unidadId) || !$producto->detalleProductoMedidas->contains('Detalle_Producto_medida_unidades_medidaId', $unidadId)) {
+                    $baseDetalle = $producto->detalleProductoMedidas->firstWhere('Detalle_Producto_medida_factor_conversion', 1)
+                        ?? $producto->detalleProductoMedidas->first();
+                    $unidadId = $baseDetalle?->Detalle_Producto_medida_unidades_medidaId ?? 'UND-00001';
                 }
 
                 if ($cantidad <= 0) {
@@ -148,6 +181,9 @@ class OrdenCompraService
                     'Detalle_Orden_CompraCantidad' => $cantidad,
                     'Detalle_Orden_CompraPrecioUnitario' => $precioUnitario,
                     'Detalle_Orden_CompraSubtotal' => $itemSubtotal,
+                    'Detalle_Orden_CompraCantidadRecibida' => 0.00,
+                    'Detalle_Orden_CompraEntregado' => 'N',
+                    'Detalle_Orden_CompraFueProductoNuevo' => 'N',
                 ];
             }
 
@@ -158,10 +194,6 @@ class OrdenCompraService
 
             $fecha = !empty($datos['Orden_CompraFecha']) ? $datos['Orden_CompraFecha'] : now();
             $observacion = $datos['Orden_CompraObservacion'] ?? null;
-            $estado = strtoupper($datos['Orden_CompraEstado'] ?? 'P');
-            if (!in_array($estado, ['P', 'C', 'A'])) {
-                $estado = 'P';
-            }
 
             // 1. Crear Cabecera de Orden_Compra
             $ordenData = [
@@ -172,6 +204,8 @@ class OrdenCompraService
                 'Orden_CompraEstado' => $estado,
                 'Orden_CompraObservacion' => $observacion,
                 'Orden_Compra_ProveedorId' => $proveedorId,
+                'Orden_CompraFechaEstimadaLlegada' => $fechaEstimada ? \Carbon\Carbon::parse($fechaEstimada) : null,
+                'Orden_CompraCerradaConFaltante' => 'N',
             ];
 
             if (!empty($datos['Orden_CompraId'])) {
@@ -318,32 +352,737 @@ class OrdenCompraService
     }
 
     /**
-     * Cambiar el estado de una orden de compra ('P', 'C', 'A').
-     * NOTA DE ARQUITECTURA:
-     * Las órdenes de compra NO impactan el Kardex ni suman stock automáticamente.
-     * La recepción física real con verificación de cantidades se maneja separadamente en almacén.
+     * Eliminar una Orden de Compra (eliminación lógica).
+     * Solo permitido si no tiene mercadería ingresada a Kárdex.
+     */
+    public function eliminarOrden(string $id): bool
+    {
+        return DB::transaction(function () use ($id) {
+            $orden = $this->obtenerOrdenPorId($id);
+
+            // Validar si la orden tiene mercadería ya recepcionada en Kárdex
+            $tieneRecepciones = $orden->detalles()
+                ->where('Detalle_Orden_CompraCantidadRecibida', '>', 0)
+                ->exists();
+
+            if ($tieneRecepciones) {
+                throw ValidationException::withMessages([
+                    'orden' => "No se puede eliminar la orden {$id} porque ya registra mercadería ingresada a Kárdex. Si desea revertirla, debe anular la recepción desde el módulo correspondiente.",
+                ]);
+            }
+
+            // Marcar detalles como eliminados
+            $auditDetalle = AuditHelper::getDeletionAudit('Detalle_Orden_Compra');
+            DetalleOrdenCompra::where('Detalle_Orden_Compra_Orden_CompraId', $id)
+                ->update($auditDetalle);
+
+            // Marcar cabecera como eliminada
+            return $this->ordenCompraRepository->delete($id);
+        });
+    }
+
+    /**
+     * Iniciar el proceso de recepción física en almacén.
+     */
+    public function iniciarRecepcion(string $id): OrdenCompra
+    {
+        return DB::transaction(function () use ($id) {
+            $orden = $this->obtenerOrdenPorId($id);
+
+            $estadosPermitidos = ['EMITIDA', 'RECEPCION_PARCIAL', 'PENDIENTE_RECEPCION', 'EN_RECEPCION', 'ENVIADA', 'BORRADOR', 'P'];
+            if (!in_array($orden->Orden_CompraEstado, $estadosPermitidos, true)) {
+                throw ValidationException::withMessages([
+                    'estado' => "No se puede iniciar la recepción de una orden en estado '{$orden->Orden_CompraEstado}'.",
+                ]);
+            }
+
+            $usuarioId = AuditHelper::getCurrentUser();
+
+            $this->ordenCompraRepository->update($id, [
+                'Orden_CompraEstado' => 'RECEPCION_PARCIAL',
+                'Orden_CompraUsuarioRecepcionId' => $usuarioId,
+            ]);
+
+            return $orden->fresh(['proveedor', 'detalles.producto', 'detalles.unidadMedida']);
+        });
+    }
+
+    /**
+     * Recepcionar un ítem individual de la orden de compra.
+     * Incrementa stock físico y genera asiento oficial de Entrada ('E') en Kárdex.
+     */
+    public function recepcionarItem(string $id, array $itemData): array
+    {
+        return DB::transaction(function () use ($id, $itemData) {
+            $orden = $this->obtenerOrdenPorId($id);
+
+            if (!in_array($orden->Orden_CompraEstado, ['RECEPCION_PARCIAL', 'EMITIDA', 'EN_RECEPCION', 'PENDIENTE_RECEPCION', 'ENVIADA', 'P', 'BORRADOR', 'PENDIENTE'], true)) {
+                throw ValidationException::withMessages([
+                    'estado' => "La orden debe estar disponible para recepción para registrar ingresos de mercadería. Estado actual: '{$orden->Orden_CompraEstado}'.",
+                ]);
+            }
+
+            // Si la orden aún no figuraba en RECEPCION_PARCIAL, transicionar automáticamente
+            if ($orden->Orden_CompraEstado !== 'RECEPCION_PARCIAL') {
+                $this->ordenCompraRepository->update($id, [
+                    'Orden_CompraEstado' => 'RECEPCION_PARCIAL',
+                    'Orden_CompraUsuarioRecepcionId' => AuditHelper::getCurrentUser(),
+                ]);
+                $orden->refresh();
+            }
+
+            $detalleId = $itemData['detalle_id'] ?? $itemData['Detalle_Orden_CompraId'] ?? null;
+            if (!$detalleId) {
+                throw ValidationException::withMessages([
+                    'detalle_id' => 'Se requiere el identificador del ítem de la orden de compra.',
+                ]);
+            }
+
+            $detalle = DetalleOrdenCompra::where('Detalle_Orden_CompraId', $detalleId)
+                ->where('Detalle_Orden_Compra_Orden_CompraId', $id)
+                ->where('Detalle_Orden_CompraEliminado', 'N')
+                ->first();
+
+            if (!$detalle) {
+                throw ValidationException::withMessages([
+                    'detalle_id' => "El ítem con ID '{$detalleId}' no pertenece a la orden {$id} o no existe.",
+                ]);
+            }
+
+            $cantidadRecibidaTurno = (float) ($itemData['cantidad_recibida'] ?? 0);
+            if ($cantidadRecibidaTurno <= 0) {
+                throw ValidationException::withMessages([
+                    'cantidad_recibida' => 'La cantidad recibida debe ser mayor a 0.',
+                ]);
+            }
+
+            $cantPedida = (float) $detalle->Detalle_Orden_CompraCantidad;
+            $cantPrevia = (float) ($detalle->Detalle_Orden_CompraCantidadRecibida ?? 0);
+            $nuevaCantRecibidaTotal = round($cantPrevia + $cantidadRecibidaTurno, 2);
+
+            if ($nuevaCantRecibidaTotal > $cantPedida) {
+                throw ValidationException::withMessages([
+                    'cantidad_recibida' => "La cantidad ingresada ({$cantidadRecibidaTurno}) sumada a lo recibido previamente ({$cantPrevia}) supera la cantidad solicitada en la orden ({$cantPedida}).",
+                ]);
+            }
+
+            $producto = Producto::with('detalleProductoMedidas')
+                ->where('ProductoId', $detalle->Detalle_ProductoId)
+                ->where('ProductoEliminado', 'N')
+                ->first();
+
+            if (!$producto) {
+                throw ValidationException::withMessages([
+                    'producto_id' => "El producto asociado al ítem no existe o fue eliminado.",
+                ]);
+            }
+
+            $stockAnterior = (float) $producto->ProductoStockActual;
+            $usuarioId = AuditHelper::getCurrentUser();
+            $esNuevo = !empty($itemData['es_producto_nuevo']);
+
+            $unidadId = $detalle->Detalle_UnidadMedidaId;
+            $unidadActiva = $producto->detalleProductoMedidas->firstWhere('Detalle_Producto_medida_unidades_medidaId', $unidadId);
+            if (!$unidadActiva) {
+                $baseDetalle = $producto->detalleProductoMedidas->firstWhere('Detalle_Producto_medida_factor_conversion', 1)
+                    ?? $producto->detalleProductoMedidas->first();
+                $unidadId = $baseDetalle?->Detalle_Producto_medida_unidades_medidaId ?? 'UND-00001';
+            }
+
+            // 1. Asentar movimiento en Kardex de tipo Entrada 'E' con subtipo 'RECEPCION_OC'
+            $movimiento = $this->inventarioService->registrarMovimiento([
+                'productoId' => $producto->ProductoId,
+                'unidadesMedidaId' => $unidadId,
+                'tipoMovimiento' => 'E',
+                'subtipo' => 'RECEPCION_OC',
+                'referenciaTipo' => 'ORDEN_COMPRA',
+                'referenciaId' => $orden->Orden_CompraId,
+                'cantidad' => $cantidadRecibidaTurno,
+                'documentoOperacionId' => $orden->Orden_CompraId,
+                'precioUnitario' => $detalle->Detalle_Orden_CompraPrecioUnitario,
+                'motivo' => "Recepción de OC {$orden->Orden_CompraId} - Cant: {$cantidadRecibidaTurno} {$producto->ProductoNombre}",
+            ]);
+
+            $stockNuevo = (float) $producto->fresh()->ProductoStockActual;
+
+            // 2. Actualizar Detalle_Orden_Compra
+            $estaCompleto = $nuevaCantRecibidaTotal >= $cantPedida;
+            $detalle->update([
+                'Detalle_Orden_CompraCantidadRecibida' => $nuevaCantRecibidaTotal,
+                'Detalle_Orden_CompraEntregado' => $estaCompleto ? 'S' : 'N',
+                'Detalle_Orden_CompraFechaRecepcionItem' => now(),
+                'Detalle_Orden_CompraUsuarioRecepcionItemId' => $usuarioId,
+                'Detalle_Orden_CompraFueProductoNuevo' => $esNuevo ? 'S' : ($detalle->Detalle_Orden_CompraFueProductoNuevo ?? 'N'),
+            ]);
+
+            // 3. Notificación en tiempo real
+            $this->notificacionService->notificarIngresoStock(
+                $producto,
+                $cantidadRecibidaTurno,
+                $orden->Orden_CompraId,
+                $stockAnterior,
+                $stockNuevo
+            );
+
+            return [
+                'orden_id' => $orden->Orden_CompraId,
+                'detalle' => $detalle->fresh(['producto', 'unidadMedida']),
+                'movimiento' => $movimiento,
+                'stock_anterior' => $stockAnterior,
+                'stock_nuevo' => $stockNuevo,
+                'es_completo' => $estaCompleto,
+            ];
+        });
+    }
+
+    /**
+     * Rechazar un ítem individual de la orden de compra en recepción.
+     * Marca el ítem como rechazado ('R') sin ingresar stock a Kárdex.
+     */
+    public function rechazarItem(string $id, array $itemData): array
+    {
+        return DB::transaction(function () use ($id, $itemData) {
+            $orden = $this->obtenerOrdenPorId($id);
+
+            if (!in_array($orden->Orden_CompraEstado, ['RECEPCION_PARCIAL', 'EMITIDA', 'EN_RECEPCION', 'PENDIENTE_RECEPCION', 'ENVIADA', 'P', 'BORRADOR', 'PENDIENTE'], true)) {
+                throw ValidationException::withMessages([
+                    'estado' => "La orden no se encuentra en un estado que permita rechazar productos. Estado actual: '{$orden->Orden_CompraEstado}'.",
+                ]);
+            }
+
+            // Si la orden aún no figuraba en RECEPCION_PARCIAL, transicionar automáticamente
+            if ($orden->Orden_CompraEstado !== 'RECEPCION_PARCIAL') {
+                $this->ordenCompraRepository->update($id, [
+                    'Orden_CompraEstado' => 'RECEPCION_PARCIAL',
+                    'Orden_CompraUsuarioRecepcionId' => AuditHelper::getCurrentUser(),
+                ]);
+                $orden->refresh();
+            }
+
+            $detalleId = $itemData['detalle_id'] ?? $itemData['Detalle_Orden_CompraId'] ?? null;
+            if (!$detalleId) {
+                throw ValidationException::withMessages([
+                    'detalle_id' => 'Se requiere el identificador del ítem de la orden de compra.',
+                ]);
+            }
+
+            $detalle = DetalleOrdenCompra::where('Detalle_Orden_CompraId', $detalleId)
+                ->where('Detalle_Orden_Compra_Orden_CompraId', $id)
+                ->where('Detalle_Orden_CompraEliminado', 'N')
+                ->first();
+
+            if (!$detalle) {
+                throw ValidationException::withMessages([
+                    'detalle_id' => "El ítem con ID '{$detalleId}' no pertenece a la orden {$id} o no existe.",
+                ]);
+            }
+
+            $usuarioId = AuditHelper::getCurrentUser();
+            $audit = AuditHelper::getModificationAudit('Detalle_Orden_Compra');
+            $detalle->update(array_merge($audit, [
+                'Detalle_Orden_CompraEntregado' => 'R', // 'R' = Rechazado
+                'Detalle_Orden_CompraFechaRecepcionItem' => now(),
+                'Detalle_Orden_CompraUsuarioRecepcionItemId' => $usuarioId,
+            ]));
+
+            return [
+                'orden_id' => $orden->Orden_CompraId,
+                'detalle_id' => $detalle->Detalle_Orden_CompraId,
+                'producto_nombre' => $detalle->producto?->ProductoNombre,
+                'estado' => 'RECHAZADO',
+                'mensaje' => "El producto '{$detalle->producto?->ProductoNombre}' fue marcado como rechazado.",
+            ];
+        });
+    }
+
+    /**
+     * Cerrar la recepción de una orden de compra.
+     * Clasifica automáticamente como CERRADA o CERRADA_CON_FALTANTE.
+     */
+    public function cerrarRecepcion(string $id, bool $generarNuevaOcFaltantes = false): OrdenCompra
+    {
+        return DB::transaction(function () use ($id, $generarNuevaOcFaltantes) {
+            $orden = $this->obtenerOrdenPorId($id);
+
+            if (!in_array($orden->Orden_CompraEstado, ['RECEPCION_PARCIAL', 'EMITIDA', 'EN_RECEPCION', 'PENDIENTE_RECEPCION', 'P', 'BORRADOR', 'PENDIENTE', 'ENVIADA'], true)) {
+                throw ValidationException::withMessages([
+                    'estado' => "No se puede cerrar una orden que no está en proceso de recepción. Estado: '{$orden->Orden_CompraEstado}'.",
+                ]);
+            }
+
+            $detalles = $orden->detalles()->where('Detalle_Orden_CompraEliminado', 'N')->get();
+            if ($detalles->isEmpty()) {
+                throw ValidationException::withMessages([
+                    'detalles' => 'La orden no contiene ítems para cerrar recepción.',
+                ]);
+            }
+
+            // Evaluar si existen faltantes
+            $hayFaltante = false;
+            foreach ($detalles as $det) {
+                $recibido = (float) ($det->Detalle_Orden_CompraCantidadRecibida ?? 0);
+                $pedido = (float) $det->Detalle_Orden_CompraCantidad;
+                if ($recibido < $pedido) {
+                    $hayFaltante = true;
+                    break;
+                }
+            }
+
+            $nuevoEstado = $hayFaltante ? 'CERRADA_CON_FALTANTE' : 'CERRADA_CONFORME';
+            $ahora = now();
+
+            $this->ordenCompraRepository->update($id, [
+                'Orden_CompraEstado' => $nuevoEstado,
+                'Orden_CompraFechaRecepcionReal' => $ahora,
+                'Orden_CompraCerradaConFaltante' => $hayFaltante ? 'S' : 'N',
+                'Orden_CompraUsuarioRecepcionId' => $orden->Orden_CompraUsuarioRecepcionId ?? AuditHelper::getCurrentUser(),
+            ]);
+
+            // Vincular productos al proveedor en el catálogo comercial
+            $this->vincularProductosProveedor($orden);
+
+            // Generar nueva OC de reposición si se solicitó expresamente
+            if ($generarNuevaOcFaltantes && $hayFaltante) {
+                $this->generarNuevaOcFaltantes($id);
+            }
+
+            return $orden->fresh(['proveedor', 'detalles.producto', 'detalles.unidadMedida']);
+        });
+    }
+
+    /**
+     * Anular una recepción de orden de compra revirtiendo el stock mediante contra-movimientos.
+     */
+    public function anularRecepcion(string $id, string $motivo): OrdenCompra
+    {
+        $motivoLimpio = trim($motivo);
+        if (mb_strlen($motivoLimpio) < 10) {
+            throw ValidationException::withMessages([
+                'motivo' => 'El motivo de anulación es obligatorio y debe tener al menos 10 caracteres explicativos.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($id, $motivoLimpio) {
+            $orden = $this->obtenerOrdenPorId($id);
+
+            $estadosPermitidos = ['CERRADA_CONFORME', 'CERRADA_CON_FALTANTE', 'RECEPCION_PARCIAL', 'CERRADA', 'EN_RECEPCION', 'C'];
+            if (!in_array($orden->Orden_CompraEstado, $estadosPermitidos, true)) {
+                throw ValidationException::withMessages([
+                    'estado' => "No se puede anular la recepción de una orden en estado '{$orden->Orden_CompraEstado}'.",
+                ]);
+            }
+
+            $detalles = $orden->detalles()->where('Detalle_Orden_CompraEliminado', 'N')->get();
+            $docOperacion = "ANUL-{$orden->Orden_CompraId}-" . now()->format('YmdHis');
+
+            foreach ($detalles as $det) {
+                $cantRecibida = (float) ($det->Detalle_Orden_CompraCantidadRecibida ?? 0);
+                if ($cantRecibida > 0) {
+                    $producto = Producto::with('detalleProductoMedidas')
+                        ->where('ProductoId', $det->Detalle_ProductoId)
+                        ->where('ProductoEliminado', 'N')
+                        ->first();
+
+                    if ($producto) {
+                        $unidadId = $det->Detalle_UnidadMedidaId;
+                        $unidadActiva = $producto->detalleProductoMedidas->firstWhere('Detalle_Producto_medida_unidades_medidaId', $unidadId);
+                        if (!$unidadActiva) {
+                            $baseDetalle = $producto->detalleProductoMedidas->firstWhere('Detalle_Producto_medida_factor_conversion', 1)
+                                ?? $producto->detalleProductoMedidas->first();
+                            $unidadId = $baseDetalle?->Detalle_Producto_medida_unidades_medidaId ?? 'UND-00001';
+                        }
+
+                        // Registrar contra-movimiento de salida 'S' con subtipo 'ANULACION_RECEPCION'
+                        $this->inventarioService->registrarMovimiento([
+                            'productoId' => $producto->ProductoId,
+                            'unidadesMedidaId' => $unidadId,
+                            'tipoMovimiento' => 'S',
+                            'subtipo' => 'ANULACION_RECEPCION',
+                            'referenciaTipo' => 'ORDEN_COMPRA',
+                            'referenciaId' => $orden->Orden_CompraId,
+                            'cantidad' => $cantRecibida,
+                            'documentoOperacionId' => $docOperacion,
+                            'precioUnitario' => $det->Detalle_Orden_CompraPrecioUnitario,
+                            'motivo' => "Anulación de recepción OC {$orden->Orden_CompraId}: {$motivoLimpio}",
+                        ]);
+                    }
+
+                    // Resetear recepciones en el ítem
+                    $det->update([
+                        'Detalle_Orden_CompraCantidadRecibida' => 0.00,
+                        'Detalle_Orden_CompraEntregado' => 'N',
+                    ]);
+                }
+            }
+
+            $obs = trim(($orden->Orden_CompraObservacion ?? '') . " [Recepción Anulada: {$motivoLimpio}]");
+            $this->ordenCompraRepository->update($id, [
+                'Orden_CompraEstado' => 'ANULADA',
+                'Orden_CompraMotivoAnulacion' => $motivoLimpio,
+                'Orden_CompraObservacion' => mb_substr($obs, 0, 250),
+            ]);
+
+            // Notificación de anulación
+            $this->notificacionService->notificarAnulacionRecepcion($orden->Orden_CompraId, $motivoLimpio);
+
+            return $orden->fresh(['proveedor', 'detalles.producto', 'detalles.unidadMedida']);
+        });
+    }
+
+    /**
+     * Registrar una compra rápida a PYME Vecina por quiebre de stock.
+     */
+    public function crearCompraRapida(array $datos): OrdenCompra
+    {
+        return DB::transaction(function () use ($datos) {
+            $pyme = Proveedor::where('ProveedorId', 'PRV-PYME-VECINA')->first();
+            if (!$pyme) {
+                $pyme = Proveedor::firstOrCreate(
+                    ['ProveedorId' => 'PRV-PYME-VECINA'],
+                    [
+                        'ProveedorRuc' => '20000000001',
+                        'ProveedorRazonSocial' => 'PYME Vecina (Comercio Aliado Local)',
+                        'ProveedorTelefono' => '999888777',
+                        'ProveedorEstado' => 'Activo',
+                        'ProveedorEliminado' => 'N',
+                    ]
+                );
+            }
+
+            $detallesInput = $datos['detalles'] ?? [];
+            if (empty($detallesInput) || !is_array($detallesInput)) {
+                throw ValidationException::withMessages([
+                    'detalles' => 'La compra rápida debe contener al menos un producto.',
+                ]);
+            }
+
+            $pedidoId = $datos['pedido_id'] ?? null;
+            $obs = $datos['observaciones'] ?? ($pedidoId ? "Compra rápida para cubrir stockout de Pedido {$pedidoId}" : 'Compra rápida a comercio aliado PYME Vecina');
+
+            // 1. Crear Orden de Compra en estado RECEPCION_PARCIAL
+            $ordenDatos = [
+                'Orden_Compra_ProveedorId' => $pyme->ProveedorId,
+                'Orden_CompraEstado' => 'RECEPCION_PARCIAL',
+                'Orden_CompraFechaEstimadaLlegada' => now()->toDateString(),
+                'Orden_CompraObservacion' => $obs,
+                'detalles' => $detallesInput,
+            ];
+
+            $orden = $this->crearOrden($ordenDatos);
+
+            // 2. Recepcionar inmediatamente todos los ítems con subtipo COMPRA_RAPIDA
+            foreach ($orden->detalles as $det) {
+                $producto = Producto::with('detalleProductoMedidas')
+                    ->where('ProductoId', $det->Detalle_ProductoId)
+                    ->where('ProductoEliminado', 'N')
+                    ->first();
+
+                if ($producto) {
+                    $cant = (float) $det->Detalle_Orden_CompraCantidad;
+                    $unidadId = $det->Detalle_UnidadMedidaId;
+                    $unidadActiva = $producto->detalleProductoMedidas->firstWhere('Detalle_Producto_medida_unidades_medidaId', $unidadId);
+                    if (!$unidadActiva) {
+                        $baseDetalle = $producto->detalleProductoMedidas->firstWhere('Detalle_Producto_medida_factor_conversion', 1)
+                            ?? $producto->detalleProductoMedidas->first();
+                        $unidadId = $baseDetalle?->Detalle_Producto_medida_unidades_medidaId ?? 'UND-00001';
+                    }
+
+                    $this->inventarioService->registrarMovimiento([
+                        'productoId' => $producto->ProductoId,
+                        'unidadesMedidaId' => $unidadId,
+                        'tipoMovimiento' => 'E',
+                        'subtipo' => 'COMPRA_RAPIDA',
+                        'referenciaTipo' => 'ORDEN_COMPRA',
+                        'referenciaId' => $orden->Orden_CompraId,
+                        'cantidad' => $cant,
+                        'documentoOperacionId' => $orden->Orden_CompraId,
+                        'precioUnitario' => $det->Detalle_Orden_CompraPrecioUnitario,
+                        'motivo' => "Compra rápida en comercio aliado PYME Vecina para OC {$orden->Orden_CompraId}",
+                    ]);
+
+                    $det->update([
+                        'Detalle_Orden_CompraCantidadRecibida' => $cant,
+                        'Detalle_Orden_CompraEntregado' => 'S',
+                        'Detalle_Orden_CompraFechaRecepcionItem' => now(),
+                        'Detalle_Orden_CompraUsuarioRecepcionItemId' => AuditHelper::getCurrentUser(),
+                    ]);
+
+                    if ($pedidoId) {
+                        try {
+                            $this->roturaStockService->registrarIntento([
+                                'pedido_id' => $pedidoId,
+                                'producto_id' => $producto->ProductoId,
+                                'orden_compra_codigo' => $orden->Orden_CompraId,
+                                'cantidad_solicitada' => $cant,
+                                'cantidad_disponible' => 0,
+                                'cantidad_faltante' => $cant,
+                                'observaciones' => "Mitigado con compra rápida {$orden->Orden_CompraId} a PYME Vecina",
+                            ]);
+                        } catch (\Throwable $e) {}
+                    }
+                }
+            }
+
+            // 3. Cerrar formalmente la orden
+            $this->ordenCompraRepository->update($orden->Orden_CompraId, [
+                'Orden_CompraEstado' => 'CERRADA_CONFORME',
+                'Orden_CompraFechaRecepcionReal' => now(),
+                'Orden_CompraCerradaConFaltante' => 'N',
+                'Orden_CompraUsuarioRecepcionId' => AuditHelper::getCurrentUser(),
+            ]);
+
+            return $orden->fresh(['proveedor', 'detalles.producto', 'detalles.unidadMedida']);
+        });
+    }
+
+    /**
+     * Generar una nueva orden de compra solo por los ítems no recibidos.
+     */
+    public function generarNuevaOcFaltantes(string $id): OrdenCompra
+    {
+        return DB::transaction(function () use ($id) {
+            $ordenOriginal = $this->obtenerOrdenPorId($id);
+
+            $detallesOriginales = $ordenOriginal->detalles()
+                ->where('Detalle_Orden_CompraEliminado', 'N')
+                ->get();
+
+            $detallesFaltantes = [];
+            foreach ($detallesOriginales as $det) {
+                $pedido = (float) $det->Detalle_Orden_CompraCantidad;
+                $recibido = (float) ($det->Detalle_Orden_CompraCantidadRecibida ?? 0);
+                $faltante = round($pedido - $recibido, 2);
+
+                if ($faltante > 0) {
+                    $detallesFaltantes[] = [
+                        'Detalle_ProductoId' => $det->Detalle_ProductoId,
+                        'Detalle_UnidadMedidaId' => $det->Detalle_UnidadMedidaId,
+                        'Detalle_Orden_CompraCantidad' => $faltante,
+                        'Detalle_Orden_CompraPrecioUnitario' => (float) $det->Detalle_Orden_CompraPrecioUnitario,
+                    ];
+                }
+            }
+
+            if (empty($detallesFaltantes)) {
+                throw ValidationException::withMessages([
+                    'faltantes' => "La orden {$id} no tiene cantidades pendientes o faltantes.",
+                ]);
+            }
+
+            $nuevaOrdenDatos = [
+                'Orden_Compra_ProveedorId' => $ordenOriginal->Orden_Compra_ProveedorId,
+                'Orden_CompraEstado' => 'EMITIDA',
+                'Orden_CompraFechaEstimadaLlegada' => now()->addDays(3)->toDateString(),
+                'Orden_CompraObservacion' => "Generada automáticamente por faltantes de la OC {$ordenOriginal->Orden_CompraId}",
+                'detalles' => $detallesFaltantes,
+            ];
+
+            return $this->crearOrden($nuevaOrdenDatos);
+        });
+    }
+
+    /**
+     * Obtener historial y auditoría de recepción de una orden de compra y sus asientos en Kárdex.
+     */
+    public function obtenerHistorialRecepcion(string $id): array
+    {
+        $orden = $this->obtenerOrdenPorId($id);
+        $orden->loadMissing(['detalles.producto', 'detalles.unidadMedida', 'proveedor']);
+
+        $movimientosKardex = MovimientoProducto::where(function ($q) use ($id) {
+            $q->where('Movimiento_productoDocumentoOperacionId', 'LIKE', "%{$id}%")
+              ->orWhere('Movimiento_productoReferenciaId', $id);
+        })
+        ->with(['producto', 'unidadMedida'])
+        ->orderBy('Movimiento_productoFecha_Movimiento', 'desc')
+        ->get();
+
+        $estadoCanonico = match ($orden->Orden_CompraEstado) {
+            'EMITIDA', 'BORRADOR', 'ENVIADA', 'PENDIENTE_RECEPCION', 'P' => 'EMITIDA',
+            'RECEPCION_PARCIAL', 'EN_RECEPCION' => 'RECEPCION_PARCIAL',
+            'CERRADA_CONFORME', 'CERRADA', 'C' => ($orden->Orden_CompraCerradaConFaltante === 'S' ? 'CERRADA_CON_FALTANTE' : 'CERRADA_CONFORME'),
+            'CERRADA_CON_FALTANTE' => 'CERRADA_CON_FALTANTE',
+            'ANULADA', 'A', 'CANCELADA_PROVEEDOR' => 'ANULADA',
+            default => $orden->Orden_CompraEstado ?? 'EMITIDA'
+        };
+
+        $usuarioReceptorNombre = AuditHelper::resolverNombreUsuario($orden->Orden_CompraUsuarioRecepcionId);
+        if (!$usuarioReceptorNombre || $usuarioReceptorNombre === 'Desconocido' || $usuarioReceptorNombre === 'CLI-00001') {
+            $primerDet = $orden->detalles->firstWhere('Detalle_Orden_CompraUsuarioRecepcionItemId');
+            if ($primerDet) {
+                $usuarioReceptorNombre = AuditHelper::resolverNombreUsuario($primerDet->Detalle_Orden_CompraUsuarioRecepcionItemId);
+            }
+            if (!$usuarioReceptorNombre || $usuarioReceptorNombre === 'Desconocido') {
+                $usuarioReceptorNombre = AuditHelper::resolverNombreUsuario(AuditHelper::getCurrentUser()) ?: 'Almacenero';
+            }
+        }
+
+        $fechaEmisionStr = $orden->Orden_CompraFecha?->format('d/m/Y H:i') ?? '-';
+        $fechaEstimadaStr = $orden->Orden_CompraFechaEstimadaLlegada?->format('d/m/Y') ?? 'No definida';
+        $fechaRecepcionRealStr = $orden->Orden_CompraFechaRecepcionReal?->format('d/m/Y H:i') 
+            ?? (in_array($estadoCanonico, ['CERRADA_CONFORME', 'CERRADA_CON_FALTANTE']) ? $orden->Orden_CompraFechaModificacion?->format('d/m/Y H:i') : 'En proceso');
+
+        $ordenData = [
+            'id' => $orden->Orden_CompraId,
+            'estado' => $estadoCanonico,
+            'estado_texto' => match($estadoCanonico) {
+                'EMITIDA' => 'Emitida',
+                'RECEPCION_PARCIAL' => 'En Recepción Parcial',
+                'CERRADA_CONFORME' => 'Cerrada Conforme',
+                'CERRADA_CON_FALTANTE' => 'Cerrada con Faltante',
+                'ANULADA' => 'Anulada',
+                default => $estadoCanonico
+            },
+            'proveedor' => $orden->proveedor ? [
+                'id' => $orden->proveedor->ProveedorId,
+                'razon_social' => $orden->proveedor->ProveedorRazonSocial,
+                'ruc' => $orden->proveedor->ProveedorRuc,
+                'telefono' => $orden->proveedor->ProveedorTelefono,
+            ] : null,
+            'fecha_emision' => $fechaEmisionStr,
+            'fecha_creacion' => $orden->Orden_CompraFecha,
+            'fecha_entrega_estimada' => $fechaEstimadaStr,
+            'fecha_estimada_llegada' => $fechaEstimadaStr,
+            'fecha_recepcion_real' => $fechaRecepcionRealStr,
+            'usuario_receptor' => $usuarioReceptorNombre,
+            'cerrada_con_faltante' => $orden->Orden_CompraCerradaConFaltante === 'S',
+            'motivo_anulacion' => $orden->Orden_CompraMotivoAnulacion,
+        ];
+
+        $itemsTransformados = $orden->detalles->map(function ($det) {
+            $solicitado = (float) $det->Detalle_Orden_CompraCantidad;
+            $recibido = (float) ($det->Detalle_Orden_CompraCantidadRecibida ?? 0);
+            $factor = 1;
+            if ($det->Detalle_ProductoId && $det->Detalle_UnidadMedidaId) {
+                $medida = \App\Models\DetalleProductoMedida::where('Detalle_Producto_medida_ProductoId', $det->Detalle_ProductoId)
+                    ->where('Detalle_Producto_medida_unidades_medidaId', $det->Detalle_UnidadMedidaId)
+                    ->where('Detalle_Producto_medidaEliminado', 'N')
+                    ->first();
+                $factor = $medida?->Detalle_Producto_medida_factor_conversion ?? 1;
+            }
+            if ($factor <= 0) $factor = 1;
+
+            $abreviatura = $det->unidadMedida?->unidades_medidaAbreviatura ?? 'UND';
+            $presentacionCompleta = ($factor > 1) ? "{$abreviatura} ({$factor} UND)" : $abreviatura;
+
+            return [
+                'id' => $det->Detalle_Orden_CompraId,
+                'producto_id' => $det->Detalle_ProductoId,
+                'producto_nombre' => $det->producto?->ProductoNombre,
+                'producto_marca' => $det->producto?->ProductoMarca,
+                'unidad_medida_id' => $det->Detalle_UnidadMedidaId,
+                'unidad_nombre' => $abreviatura,
+                'unidad_medida_abreviatura' => $abreviatura,
+                'factor_conversion' => (int) $factor,
+                'presentacion_completa' => $presentacionCompleta,
+                'cantidad_solicitada' => $solicitado,
+                'cantidad_recibida' => $recibido,
+                'cantidad_pendiente' => max(0.0, round($solicitado - $recibido, 2)),
+                'total_unidades_base_solicitadas' => round($solicitado * $factor, 2),
+                'total_unidades_base_recibidas' => round($recibido * $factor, 2),
+                'total_unidades_base_pendientes' => round(max(0.0, round($solicitado - $recibido, 2)) * $factor, 2),
+                'entregado' => $det->Detalle_Orden_CompraEntregado === 'S',
+                'estado_recepcion' => ($recibido >= $solicitado) ? 'COMPLETO' : ($recibido > 0 ? 'PARCIAL' : 'PENDIENTE'),
+                'fecha_recepcion' => $det->Detalle_Orden_CompraFechaRecepcionItem?->format('d/m/Y H:i'),
+                'usuario_recepcion' => AuditHelper::resolverNombreUsuario($det->Detalle_Orden_CompraUsuarioRecepcionItemId),
+            ];
+        });
+
+        $movsTransformados = $movimientosKardex->map(function ($m) {
+            return [
+                'id' => $m->Movimiento_productoId,
+                'producto_id' => $m->Movimiento_producto_ProductoId,
+                'producto_nombre' => $m->producto?->ProductoNombre,
+                'unidad_nombre' => $m->unidadMedida?->unidades_medidaAbreviatura ?? 'UND',
+                'tipo' => $m->Movimiento_productoTipoMovimiento,
+                'tipo_texto' => $m->Movimiento_productoTipoMovimiento === 'E' ? 'Entrada (Almacén)' : 'Salida',
+                'subtipo' => $m->Movimiento_productoSubtipo,
+                'cantidad_entrada' => (float) $m->Movimiento_productoCantidadEntrada,
+                'cantidad_salida' => (float) $m->Movimiento_productoCantidadSalida,
+                'saldo' => (float) $m->Movimiento_productoCantidadSaldo,
+                'fecha' => $m->Movimiento_productoFecha_Movimiento?->format('d/m/Y H:i'),
+                'documento' => $m->Movimiento_productoDocumentoOperacionId,
+                'motivo' => $m->Movimiento_productoMotivo,
+                'usuario' => AuditHelper::resolverNombreUsuario($m->Movimiento_productoUsuarioCreacion),
+            ];
+        });
+
+        return [
+            'orden_id' => $orden->Orden_CompraId,
+            'orden' => $ordenData,
+            'items' => $itemsTransformados,
+            'detalles' => $itemsTransformados,
+            'movimientos_kardex' => $movsTransformados,
+            'estado' => $estadoCanonico,
+            'fecha_emision' => $fechaEmisionStr,
+            'fecha_entrega_estimada' => $fechaEstimadaStr,
+            'fecha_recepcion_real' => $fechaRecepcionRealStr,
+            'usuario_receptor' => $usuarioReceptorNombre,
+            'cerrada_con_faltante' => $orden->Orden_CompraCerradaConFaltante === 'S',
+        ];
+    }
+
+    /**
+     * Cambiar el estado de una orden de compra garantizando consistencia de Kárdex.
      */
     public function cambiarEstado(string $id, string $nuevoEstado, ?string $motivo = null): OrdenCompra
     {
         return DB::transaction(function () use ($id, $nuevoEstado, $motivo) {
             $orden = $this->obtenerOrdenPorId($id);
-            $nuevoEstado = strtoupper($nuevoEstado);
+            $rawEstado = strtoupper(trim($nuevoEstado));
 
-            if (!in_array($nuevoEstado, ['P', 'C', 'A'])) {
+            $mapLegacy = [
+                'P' => 'EMITIDA',
+                'BORRADOR' => 'EMITIDA',
+                'ENVIADA' => 'EMITIDA',
+                'PENDIENTE_RECEPCION' => 'EMITIDA',
+                'EN_RECEPCION' => 'RECEPCION_PARCIAL',
+                'C' => 'CERRADA_CONFORME',
+                'CERRADA' => 'CERRADA_CONFORME',
+                'A' => 'ANULADA',
+                'CANCELADA_PROVEEDOR' => 'ANULADA',
+            ];
+            $estado = $mapLegacy[$rawEstado] ?? $rawEstado;
+            $estadosValidos = ['EMITIDA', 'RECEPCION_PARCIAL', 'CERRADA_CONFORME', 'CERRADA_CON_FALTANTE', 'ANULADA'];
+
+            if (!in_array($estado, $estadosValidos, true)) {
                 throw ValidationException::withMessages([
-                    'estado' => "Estado '{$nuevoEstado}' no es válido. Opciones permitidas: 'P' (Pendiente), 'C' (Completada), 'A' (Anulada).",
+                    'estado' => "Estado '{$nuevoEstado}' no es válido. Opciones permitidas: " . implode(', ', $estadosValidos),
                 ]);
             }
 
-            $estadoActual = $orden->Orden_CompraEstado;
+            $estadoActual = match ($orden->Orden_CompraEstado) {
+                'P', 'BORRADOR', 'ENVIADA', 'PENDIENTE_RECEPCION' => 'EMITIDA',
+                'EN_RECEPCION' => 'RECEPCION_PARCIAL',
+                'C', 'CERRADA' => 'CERRADA_CONFORME',
+                'A', 'CANCELADA_PROVEEDOR' => 'ANULADA',
+                default => $orden->Orden_CompraEstado
+            };
 
-            if ($estadoActual === $nuevoEstado) {
+            if ($estadoActual === $estado) {
                 return $orden;
             }
 
-            // Transición a 'C' (Completada / Atendida por el proveedor - Ingreso a almacén)
-            if ($nuevoEstado === 'C') {
-                if ($estadoActual === 'A') {
+            // 1. Transición a ANULADA
+            if ($estado === 'ANULADA') {
+                $totalRecibido = (float) $orden->detalles()->sum('Detalle_Orden_CompraCantidadRecibida');
+                if ($totalRecibido > 0 || in_array($orden->Orden_CompraEstado, ['CERRADA_CONFORME', 'CERRADA', 'CERRADA_CON_FALTANTE', 'C'], true)) {
+                    return $this->anularRecepcion($id, $motivo ?: 'Anulación formal de la orden de compra');
+                }
+
+                $obs = $motivo ? trim(($orden->Orden_CompraObservacion ?? '') . " [Anulada: {$motivo}]") : $orden->Orden_CompraObservacion;
+                $this->ordenCompraRepository->update($id, [
+                    'Orden_CompraEstado' => 'ANULADA',
+                    'Orden_CompraMotivoAnulacion' => $motivo,
+                    'Orden_CompraObservacion' => mb_substr((string) $obs, 0, 250),
+                ]);
+
+                return $orden->fresh(['proveedor', 'detalles.producto', 'detalles.unidadMedida']);
+            }
+
+            // 2. Transición a CERRADA_CONFORME (Recepción total directa)
+            if ($estado === 'CERRADA_CONFORME') {
+                if (in_array($orden->Orden_CompraEstado, ['ANULADA', 'A'], true)) {
                     throw ValidationException::withMessages([
                         'estado' => 'No se puede completar una orden que ha sido previamente anulada.',
                     ]);
@@ -351,128 +1090,40 @@ class OrdenCompraService
 
                 if (empty($orden->Orden_Compra_ProveedorId)) {
                     throw ValidationException::withMessages([
-                        'Orden_Compra_ProveedorId' => 'Debe asignar un proveedor a la orden antes de darla por completada.',
+                        'Orden_Compra_ProveedorId' => 'Debe asignar un proveedor a la orden antes de completarla.',
                     ]);
                 }
 
-                // Vinculación comercial de catálogo Producto_Proveedor
-                $this->vincularProductosProveedor($orden);
+                // Recepcionar ítems pendientes en lote
+                foreach ($orden->detalles as $det) {
+                    $cantPedida = (float) $det->Detalle_Orden_CompraCantidad;
+                    $cantRecibida = (float) ($det->Detalle_Orden_CompraCantidadRecibida ?? 0);
+                    $pendiente = round($cantPedida - $cantRecibida, 2);
 
-                // Ingresar mercadería a almacén y registrar movimientos de Entrada 'E' en Kardex
-                foreach ($orden->detalles as $detalle) {
-                    $producto = Producto::where('ProductoId', $detalle->Detalle_ProductoId)
-                        ->where('ProductoEliminado', 'N')
-                        ->first();
-                    if ($producto) {
-                        $cantidadComprada = (float) $detalle->Detalle_Orden_CompraCantidad;
-                        $precioUnitario = (float) $detalle->Detalle_Orden_CompraPrecioUnitario;
-
-                        // Toda la cantidad ingresa a stock físico
-                        $producto->increment('ProductoStockActual', $cantidadComprada);
-
-                        $nuevoSaldo = (float) $producto->fresh()->ProductoStockActual;
-
-                        // Registrar movimiento de Entrada en Kárdex
-                        $movId = app(InventarioService::class)->getNextMovimientoId();
-                        $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
-
-                        MovimientoProducto::create(array_merge([
-                            'Movimiento_productoId' => $movId,
-                            'Movimiento_productoCantidadPresentacion' => (string) $cantidadComprada,
-                            'Movimiento_productoDocumentoOperacionId' => $orden->Orden_CompraId,
-                            'Movimiento_productoTipoMovimiento' => 'E', // E = Entrada por Orden de Compra
-                            'Movimiento_productoCostoPrecioUnitario' => (string) $precioUnitario,
-                            'Movimiento_productoCantidadEntrada' => (string) $cantidadComprada,
-                            'Movimiento_productoCantidadSalida' => '0',
-                            'Movimiento_productoCantidadSaldo' => (string) $nuevoSaldo,
-                            'Movimiento_productoFecha_Movimiento' => now(),
-                            'Movimiento_producto_ProductoId' => $producto->ProductoId,
-                            'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $detalle->Detalle_UnidadMedidaId ?? 'UND-00001',
-                            'Movimiento_productoEliminado' => 'N',
-                        ], $auditMov));
+                    if ($pendiente > 0) {
+                        $this->recepcionarItem($id, [
+                            'detalle_id' => $det->Detalle_Orden_CompraId,
+                            'cantidad_recibida' => $pendiente,
+                        ]);
                     }
                 }
 
-                $this->ordenCompraRepository->update($id, ['Orden_CompraEstado' => 'C']);
+                return $this->cerrarRecepcion($id, false);
             }
-            // Transición a 'A' (Anulada)
-            elseif ($nuevoEstado === 'A') {
-                // Si la orden ya había sido completada e ingresada a almacén, revertir el stock en Kárdex
-                if ($estadoActual === 'C') {
-                    foreach ($orden->detalles as $detalle) {
-                        $producto = Producto::where('ProductoId', $detalle->Detalle_ProductoId)
-                            ->where('ProductoEliminado', 'N')
-                            ->first();
-                        if ($producto) {
-                            $cantidad = (float) $detalle->Detalle_Orden_CompraCantidad;
-                            $producto->decrement('ProductoStockActual', $cantidad);
-                            $nuevoSaldo = (float) $producto->fresh()->ProductoStockActual;
 
-                            $movId = app(InventarioService::class)->getNextMovimientoId();
-                            $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
-
-                            MovimientoProducto::create(array_merge([
-                                'Movimiento_productoId' => $movId,
-                                'Movimiento_productoCantidadPresentacion' => (string) $cantidad,
-                                'Movimiento_productoDocumentoOperacionId' => "ANUL-{$orden->Orden_CompraId}",
-                                'Movimiento_productoTipoMovimiento' => 'S', // Salida por anulación de compra
-                                'Movimiento_productoCostoPrecioUnitario' => (string) $detalle->Detalle_Orden_CompraPrecioUnitario,
-                                'Movimiento_productoCantidadEntrada' => '0',
-                                'Movimiento_productoCantidadSalida' => (string) $cantidad,
-                                'Movimiento_productoCantidadSaldo' => (string) $nuevoSaldo,
-                                'Movimiento_productoFecha_Movimiento' => now(),
-                                'Movimiento_producto_ProductoId' => $producto->ProductoId,
-                                'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $detalle->Detalle_UnidadMedidaId ?? 'UND-00001',
-                                'Movimiento_productoEliminado' => 'N',
-                            ], $auditMov));
-                        }
-                    }
-                }
-
-                $updateData = ['Orden_CompraEstado' => 'A'];
-                if ($motivo) {
-                    $obs = trim(($orden->Orden_CompraObservacion ?? '') . " [Anulada: {$motivo}]");
-                    $updateData['Orden_CompraObservacion'] = mb_substr($obs, 0, 250);
-                }
-
-                $this->ordenCompraRepository->update($id, $updateData);
+            // 3. Transición a RECEPCION_PARCIAL
+            if ($estado === 'RECEPCION_PARCIAL') {
+                return $this->iniciarRecepcion($id);
             }
-            // Revertir a Pendiente 'P'
-            elseif ($nuevoEstado === 'P') {
-                if ($estadoActual === 'C') {
-                    // Revertir el stock ingresado previamente
-                    foreach ($orden->detalles as $detalle) {
-                        $producto = Producto::where('ProductoId', $detalle->Detalle_ProductoId)
-                            ->where('ProductoEliminado', 'N')
-                            ->first();
-                        if ($producto) {
-                            $cantidad = (float) $detalle->Detalle_Orden_CompraCantidad;
-                            $producto->decrement('ProductoStockActual', $cantidad);
-                            $nuevoSaldo = (float) $producto->fresh()->ProductoStockActual;
 
-                            $movId = app(InventarioService::class)->getNextMovimientoId();
-                            $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
-
-                            MovimientoProducto::create(array_merge([
-                                'Movimiento_productoId' => $movId,
-                                'Movimiento_productoCantidadPresentacion' => (string) $cantidad,
-                                'Movimiento_productoDocumentoOperacionId' => "REV-{$orden->Orden_CompraId}",
-                                'Movimiento_productoTipoMovimiento' => 'S',
-                                'Movimiento_productoCostoPrecioUnitario' => (string) $detalle->Detalle_Orden_CompraPrecioUnitario,
-                                'Movimiento_productoCantidadEntrada' => '0',
-                                'Movimiento_productoCantidadSalida' => (string) $cantidad,
-                                'Movimiento_productoCantidadSaldo' => (string) $nuevoSaldo,
-                                'Movimiento_productoFecha_Movimiento' => now(),
-                                'Movimiento_producto_ProductoId' => $producto->ProductoId,
-                                'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $detalle->Detalle_UnidadMedidaId ?? 'UND-00001',
-                                'Movimiento_productoEliminado' => 'N',
-                            ], $auditMov));
-                        }
-                    }
-                }
-
-                $this->ordenCompraRepository->update($id, ['Orden_CompraEstado' => 'P']);
+            // 4. Otras transiciones (EMITIDA, etc.)
+            $updateData = ['Orden_CompraEstado' => $estado];
+            if ($motivo) {
+                $obs = trim(($orden->Orden_CompraObservacion ?? '') . " [Estado {$estado}: {$motivo}]");
+                $updateData['Orden_CompraObservacion'] = mb_substr($obs, 0, 250);
             }
+
+            $this->ordenCompraRepository->update($id, $updateData);
 
             return $orden->fresh(['proveedor', 'detalles.producto', 'detalles.unidadMedida']);
         });
@@ -504,19 +1155,6 @@ class OrdenCompraService
         }
     }
 
-    /**
-     * Eliminación lógica (Soft-Delete) de una orden de compra.
-     */
-    public function eliminarOrden(string $id): bool
-    {
-        $orden = $this->obtenerOrdenPorId($id);
-
-        // Marcar detalles como eliminados
-        DetalleOrdenCompra::where('Detalle_Orden_Compra_Orden_CompraId', $id)
-            ->update(AuditHelper::getDeletionAudit('Detalle_Orden_Compra'));
-
-        return $this->ordenCompraRepository->delete($id);
-    }
 
     /**
      * Restaurar una orden de compra previamente eliminada.
@@ -616,18 +1254,17 @@ class OrdenCompraService
                     ?? $det->unidadMedida?->unidades_medidaDescripcionUnidades 
                     ?? 'UND';
                 $prodNombre = $det->producto?->ProductoNombre ?? 'Producto';
-                $pu = number_format((float) $det->Detalle_Orden_CompraPrecioUnitario, 2);
-                $subtotal = number_format((float) $det->Detalle_Orden_CompraSubtotal, 2);
-                $lineas[] = "• {$cant} {$unidad} - {$prodNombre} (P.U: S/ {$pu} | Total: S/ {$subtotal})";
+                $marca = !empty($det->producto?->ProductoMarca) ? " [{$det->producto->ProductoMarca}]" : "";
+                $lineas[] = "• {$cant} {$unidad} - {$prodNombre}{$marca}";
             }
         }
 
         $lineas[] = "";
-        $lineas[] = "💰 *Total de la Orden:* S/ " . number_format((float) $orden->Orden_CompraTotal, 2);
+        $lineas[] = "📦 *Total de productos solicitados:* " . count($orden->detalles);
 
         if (!empty($orden->Orden_CompraObservacion) && !str_contains($orden->Orden_CompraObservacion, 'WhatsApp')) {
             $lineas[] = "";
-            $lineas[] = "📝 *Nota:* {$orden->Orden_CompraObservacion}";
+            $lineas[] = "📝 *Nota / Instrucción:* {$orden->Orden_CompraObservacion}";
         }
 
         $lineas[] = "";

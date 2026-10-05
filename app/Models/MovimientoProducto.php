@@ -29,6 +29,10 @@ class MovimientoProducto extends Model
         'Movimiento_producto_ProductoId',
         'Movimiento_producto_Detalle_Producto_medida_ProductoId', // Alias de compatibilidad
         'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId',
+        'Movimiento_productoSubtipo',
+        'Movimiento_productoReferenciaTipo',
+        'Movimiento_productoReferenciaId',
+        'Movimiento_productoMotivo',
         'Movimiento_productoEliminado',
         'Movimiento_productoUsuarioCreacion',
         'Movimiento_productoHostCreacion',

@@ -18,6 +18,7 @@ use App\Http\Controllers\ProductoUbiController;
 use App\Http\Controllers\ProveedorController;
 use App\Http\Controllers\PurchasePredictionController;
 use App\Http\Controllers\RolesSeguridadController;
+use App\Http\Controllers\RoturaStockController;
 use App\Http\Controllers\SunatController;
 use App\Http\Controllers\UnidadesMedidaController;
 use Illuminate\Support\Facades\Route;
@@ -38,6 +39,7 @@ Route::prefix('auth')->group(function () {
 Route::prefix('dashboard')->group(function () {
     Route::get('/indicators', [DashboardController::class, 'indicators']);
     Route::get('/indicator/{id}', [DashboardController::class, 'detail']);
+    Route::get('/compare', [DashboardController::class, 'compare']);
     Route::get('/indicadores', [DashboardController::class, 'indicadores']);
     Route::get('/tokens', [DashboardController::class, 'tokenConsumption']);
 });
@@ -73,6 +75,7 @@ Route::prefix('inventario')->group(function () {
     // Movimientos (Kardex)
     Route::get('/movimientos', [MovimientoController::class, 'index']);
     Route::post('/movimientos', [MovimientoController::class, 'store']);
+    Route::post('/movimientos/ajuste-manual', [MovimientoController::class, 'ajusteManual']);
     Route::get('/movimientos/producto/{productoId}', [MovimientoController::class, 'porProducto']);
     Route::get('/movimientos/{id}', [MovimientoController::class, 'show']);
 
@@ -92,6 +95,7 @@ Route::prefix('inventario')->group(function () {
 
     // Productos (CRUD)
     Route::get('/productos-select', [ProductoController::class, 'productosParaSelect']);
+    Route::post('/productos/express', [ProductoController::class, 'storeExpress']);
     Route::get('/productos', [ProductoController::class, 'index']);
     Route::post('/productos', [ProductoController::class, 'store']);
     Route::get('/productos/{id}', [ProductoController::class, 'show']);
@@ -106,6 +110,8 @@ Route::prefix('inventario')->group(function () {
 Route::prefix('proveedores')->group(function () {
     Route::get('/', [ProveedorController::class, 'index']);
     Route::get('/resumen', [ProveedorController::class, 'resumen']);
+    Route::get('/cumplimiento', [ProveedorController::class, 'cumplimiento']);
+    Route::get('/ranking-cumplimiento', [ProveedorController::class, 'rankingCumplimiento']);
     Route::get('/buscar', [ProveedorController::class, 'buscar']);
     Route::post('/', [ProveedorController::class, 'store']);
     Route::get('/{id}', [ProveedorController::class, 'show']);
@@ -221,17 +227,32 @@ Route::prefix('ordenes-compra')->group(function () {
     Route::get('/reporte/pdf', [OrdenCompraController::class, 'reportePdf']);
     Route::get('/', [OrdenCompraController::class, 'index']);
     Route::post('/', [OrdenCompraController::class, 'store']);
+    Route::post('/compra-rapida', [OrdenCompraController::class, 'compraRapida']);
     Route::get('/{id}', [OrdenCompraController::class, 'show']);
     Route::put('/{id}', [OrdenCompraController::class, 'update']);
     Route::delete('/{id}', [OrdenCompraController::class, 'destroy']);
     Route::post('/{id}/restore', [OrdenCompraController::class, 'restore']);
     Route::patch('/{id}/proveedor', [OrdenCompraController::class, 'asignarProveedor']);
     Route::patch('/{id}/estado', [OrdenCompraController::class, 'cambiarEstado']);
+    Route::post('/{id}/iniciar-recepcion', [OrdenCompraController::class, 'iniciarRecepcion']);
+    Route::post('/{id}/recepcionar-item', [OrdenCompraController::class, 'recepcionarItem']);
+    Route::post('/{id}/rechazar-item', [OrdenCompraController::class, 'rechazarItem']);
+    Route::post('/{id}/cerrar-recepcion', [OrdenCompraController::class, 'cerrarRecepcion']);
+    Route::post('/{id}/anular-recepcion', [OrdenCompraController::class, 'anularRecepcion']);
+    Route::get('/{id}/historial-recepcion', [OrdenCompraController::class, 'historialRecepcion']);
     Route::match(['get', 'post'], '/{id}/whatsapp', [OrdenCompraController::class, 'whatsapp']);
     Route::get('/{id}/mensaje-whatsapp', [OrdenCompraController::class, 'mensajeWhatsapp']);
     Route::post('/{id}/enviar-whatsapp', [OrdenCompraController::class, 'enviarWhatsapp']);
     Route::get('/{id}/pdf', [OrdenCompraController::class, 'pdf']);
     Route::get('/{id}/pdf-url', [OrdenCompraController::class, 'pdfUrl']);
+});
+
+// Rutas de Auditoría y Control de Roturas de Stock (Indicador PRS)
+Route::prefix('roturas-stock')->group(function () {
+    Route::get('/', [RoturaStockController::class, 'index']);
+    Route::get('/resumen', [RoturaStockController::class, 'resumen']);
+    Route::post('/intento', [RoturaStockController::class, 'intento']);
+    Route::post('/confirmar', [RoturaStockController::class, 'confirmar']);
 });
 
 // 14. Alias Directo para Ajustes de Inventario y Mermas (/api/ajustes)

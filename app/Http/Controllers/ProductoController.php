@@ -92,6 +92,67 @@ class ProductoController extends Controller
     }
 
     /**
+     * Registro exprés de nuevo producto durante la recepción física de mercancía.
+     * POST /api/inventario/productos/express
+     */
+    public function storeExpress(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'ProductoNombre' => ['sometimes', 'string', 'max:45'],
+                'nombre' => ['sometimes', 'string', 'max:45'],
+                'Producto_Categoria_ProductoId' => ['sometimes', 'string', 'exists:Categoria_Producto,Categoria_ProductoId'],
+                'categoria_id' => ['sometimes', 'string', 'exists:Categoria_Producto,Categoria_ProductoId'],
+                'unidades_medidaId' => ['nullable', 'string', 'exists:unidades_medida,unidades_medidaId'],
+                'unidad_medida_id' => ['nullable', 'string', 'exists:unidades_medida,unidades_medidaId'],
+                'precio_compra' => ['nullable', 'numeric', 'min:0'],
+                'precio_venta' => ['nullable', 'numeric', 'min:0'],
+                'proveedor_id' => ['nullable', 'string'],
+            ]);
+
+            $nombre = $validated['ProductoNombre'] ?? $validated['nombre'] ?? null;
+            $categoriaId = $validated['Producto_Categoria_ProductoId'] ?? $validated['categoria_id'] ?? null;
+
+            if (empty($nombre)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El nombre del producto es obligatorio.',
+                ], 422);
+            }
+
+            $datos = [
+                'ProductoNombre' => $nombre,
+                'Producto_Categoria_ProductoId' => $categoriaId,
+                'unidades_medidaId' => $validated['unidades_medidaId'] ?? $validated['unidad_medida_id'] ?? 'UND-00001',
+                'precio_compra' => $validated['precio_compra'] ?? 0,
+                'precio_venta' => $validated['precio_venta'] ?? 0,
+                'proveedor_id' => $validated['proveedor_id'] ?? null,
+            ];
+
+            $producto = $this->inventarioService->crearProductoExpress($datos);
+
+            return response()->json([
+                'success' => true,
+                'data' => $producto,
+                'message' => "Producto '{$producto->ProductoNombre}' creado en modo exprés correctamente.",
+            ], 201);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'success' => false,
+                'data' => null,
+                'message' => 'Error de validación al crear producto exprés.',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'data' => null,
+                'message' => 'Error al crear producto exprés: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Display the specified product with conversion details and suppliers.
      */
     public function show(string $id): JsonResponse
