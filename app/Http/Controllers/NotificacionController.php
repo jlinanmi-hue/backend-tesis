@@ -21,7 +21,7 @@ class NotificacionController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $filtros = $request->only(['tipo', 'solo_no_leidas', 'usuario_id']);
+            $filtros = $request->only(['tipo', 'categoria', 'search', 'solo_no_leidas', 'usuario_id']);
             $perPage = (int) $request->input('per_page', 15);
 
             $resultado = $this->notificacionService->listar($filtros, $perPage);
@@ -86,6 +86,55 @@ class NotificacionController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al marcar notificaciones: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Eliminar una notificación
+     */
+    public function destroy(string $id): JsonResponse
+    {
+        try {
+            $ok = $this->notificacionService->eliminar($id);
+
+            if (!$ok) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Notificación '{$id}' no encontrada.",
+                ], 404);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Notificación eliminada correctamente.',
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al eliminar notificación: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Eliminar todas las notificaciones
+     */
+    public function destroyAll(Request $request): JsonResponse
+    {
+        try {
+            $usuarioId = $request->input('usuario_id');
+            $cant = $this->notificacionService->eliminarTodas($usuarioId);
+
+            return response()->json([
+                'success' => true,
+                'total_eliminadas' => $cant,
+                'message' => "{$cant} notificaciones eliminadas.",
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al eliminar notificaciones: ' . $e->getMessage(),
             ], 500);
         }
     }

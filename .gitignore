@@ -38,3 +38,7 @@ scratch/
 __pycache__/
 *.pyc
 *.pyo
+
+**/caddy
+frankenphp
+frankenphp-worker.php

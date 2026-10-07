@@ -67,6 +67,9 @@ class EmpresaService
             'EmpresaLogo',
             'EmpresaMensajeTicket',
             'EmpresaEstado',
+            'EmpresaLatitud',
+            'EmpresaLongitud',
+            'EmpresaZonaReferencia',
         ];
 
         $actualizar = [];

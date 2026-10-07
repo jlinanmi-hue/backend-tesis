@@ -163,6 +163,19 @@ class NotificacionService
             $query->where('NotificacionTipo', $filtros['tipo']);
         }
 
+        if (!empty($filtros['categoria'])) {
+            $query->where('NotificacionCategoria', $filtros['categoria']);
+        }
+
+        if (!empty($filtros['search'])) {
+            $term = $filtros['search'];
+            $query->where(function ($q) use ($term) {
+                $q->where('NotificacionTitulo', 'like', "%{$term}%")
+                  ->orWhere('NotificacionMensaje', 'like', "%{$term}%")
+                  ->orWhere('NotificacionReferenciaId', 'like', "%{$term}%");
+            });
+        }
+
         if (isset($filtros['solo_no_leidas']) && filter_var($filtros['solo_no_leidas'], FILTER_VALIDATE_BOOLEAN)) {
             $query->where('NotificacionLeida', 'N');
         }
@@ -199,6 +212,28 @@ class NotificacionService
     {
         $query = Notificacion::noLeidas()->paraUsuario($usuarioId);
         return $query->update(['NotificacionLeida' => 'S']);
+    }
+
+    /**
+     * Eliminar (soft-delete) una notificación
+     */
+    public function eliminar(string $id): bool
+    {
+        $notif = Notificacion::where('NotificacionId', $id)->first();
+        if (!$notif) {
+            return false;
+        }
+
+        return (bool) $notif->update(['NotificacionEliminado' => 'S']);
+    }
+
+    /**
+     * Eliminar todas las notificaciones activas
+     */
+    public function eliminarTodas(?string $usuarioId = null): int
+    {
+        $query = Notificacion::activas()->paraUsuario($usuarioId);
+        return $query->update(['NotificacionEliminado' => 'S']);
     }
 
     /**

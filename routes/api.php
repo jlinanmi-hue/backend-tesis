@@ -7,6 +7,7 @@ use App\Http\Controllers\CanalPedidoController;
 use App\Http\Controllers\CategoriaProductoController;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DeliveryController;
 use App\Http\Controllers\EmpresaController;
 use App\Http\Controllers\MovimientoController;
 use App\Http\Controllers\NotificacionController;
@@ -37,6 +38,7 @@ Route::prefix('auth')->group(function () {
 
 // Rutas del Dashboard / Métricas Oficiales de Tesis (PODE, PEOR, PRS, TBPP)
 Route::prefix('dashboard')->group(function () {
+    Route::get('/ejecutivo', [DashboardController::class, 'ejecutivo']);
     Route::get('/indicators', [DashboardController::class, 'indicators']);
     Route::get('/indicator/{id}', [DashboardController::class, 'detail']);
     Route::get('/compare', [DashboardController::class, 'compare']);
@@ -154,6 +156,18 @@ Route::prefix('canales-pedido')->group(function () {
     Route::patch('/{id}/estado', [CanalPedidoController::class, 'updateEstado']);
     Route::post('/{id}/restore', [CanalPedidoController::class, 'restore']);
 });
+
+// 7.1. Rutas del Módulo de Zonas de Delivery (Catálogos)
+$registerZonaRoutes = function () {
+    Route::get('/', [DeliveryController::class, 'index']);
+    Route::get('/activas', [DeliveryController::class, 'activas']);
+    Route::post('/', [DeliveryController::class, 'store']);
+    Route::get('/{id}', [DeliveryController::class, 'show']);
+    Route::put('/{id}', [DeliveryController::class, 'update']);
+    Route::patch('/{id}/estado', [DeliveryController::class, 'cambiarEstado']);
+};
+Route::prefix('zonas-delivery')->group($registerZonaRoutes);
+Route::prefix('catalogos/zonas-delivery')->group($registerZonaRoutes);
 
 // 8. Rutas del Módulo de Clientes
 Route::prefix('clientes')->group(function () {
@@ -275,6 +289,8 @@ Route::prefix('notificaciones')->group(function () {
     Route::get('/', [NotificacionController::class, 'index']);
     Route::patch('/{id}/leer', [NotificacionController::class, 'marcarLeida']);
     Route::post('/marcar-todas', [NotificacionController::class, 'marcarTodas']);
+    Route::delete('/{id}', [NotificacionController::class, 'destroy']);
+    Route::delete('/', [NotificacionController::class, 'destroyAll']);
     Route::post('/test', [NotificacionController::class, 'test']);
 });
 

@@ -55,6 +55,9 @@ class EmpresaController extends Controller
             'EmpresaLogo' => 'nullable|string',
             'EmpresaMensajeTicket' => 'nullable|string|max:1000',
             'EmpresaEstado' => 'nullable|string|in:A,I,1,0',
+            'EmpresaLatitud' => 'nullable|numeric|between:-90,90',
+            'EmpresaLongitud' => 'nullable|numeric|between:-180,180',
+            'EmpresaZonaReferencia' => 'nullable|string|max:150',
         ]);
 
         if ($validator->fails()) {

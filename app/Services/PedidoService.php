@@ -189,9 +189,84 @@ class PedidoService
                 ];
             }
 
-            // 4. Calcular IGV (18%) y Total
+            // Validación de Fecha de Entrega
+            $fechaEntrega = null;
+            if (!empty($datos['fecha_entrega']) || !empty($datos['PedidoFechaEntrega'])) {
+                $rawFechaEntrega = $datos['fecha_entrega'] ?? $datos['PedidoFechaEntrega'];
+                $fechaEntregaParsed = \Carbon\Carbon::parse($rawFechaEntrega)->startOfDay();
+                if ($fechaEntregaParsed->lt(\Carbon\Carbon::today())) {
+                    throw ValidationException::withMessages([
+                        'fecha_entrega' => 'La fecha de entrega no puede ser anterior a la fecha actual.',
+                    ]);
+                }
+                $fechaEntrega = $fechaEntregaParsed->toDateTimeString();
+            }
+
+            // Manejo de Delivery y Zonas Geográficas
+            $esDelivery = false;
+            if (isset($datos['es_delivery'])) {
+                $esDelivery = filter_var($datos['es_delivery'], FILTER_VALIDATE_BOOLEAN) || in_array(strtoupper((string)$datos['es_delivery']), ['S', '1', 'TRUE']);
+            } elseif (isset($datos['PedidoEsDelivery'])) {
+                $esDelivery = in_array(strtoupper((string)$datos['PedidoEsDelivery']), ['S', '1', 'TRUE']);
+            }
+
+            $costoDelivery = 0.00;
+            $zonaDeliveryId = null;
+            $direccionEntrega = null;
+            $referenciaEntrega = null;
+
+            if ($esDelivery) {
+                // Principio 2 — Mínimo sobre subtotal de productos (S/ 100)
+                if ($subtotalGeneral < 100.00) {
+                    throw ValidationException::withMessages([
+                        'es_delivery' => 'El servicio de delivery requiere un monto mínimo en productos de S/ 100.00. Subtotal actual: S/ ' . number_format($subtotalGeneral, 2),
+                    ]);
+                }
+
+                $zonaDeliveryId = !empty($datos['zona_delivery_id']) 
+                    ? trim($datos['zona_delivery_id']) 
+                    : (!empty($datos['PedidoZonaDeliveryId']) ? trim($datos['PedidoZonaDeliveryId']) : null);
+
+                if (empty($zonaDeliveryId)) {
+                    throw ValidationException::withMessages([
+                        'zona_delivery_id' => 'Debe seleccionar una zona de delivery.',
+                    ]);
+                }
+
+                $zona = \App\Models\ZonaDelivery::where('Zona_DeliveryId', $zonaDeliveryId)->first();
+                if (!$zona) {
+                    throw ValidationException::withMessages([
+                        'zona_delivery_id' => 'La zona de delivery especificada no existe.',
+                    ]);
+                }
+
+                // Principio 4 — Zona inactiva = delivery bloqueado
+                if (!$zona->esActiva()) {
+                    throw ValidationException::withMessages([
+                        'zona_delivery_id' => "La zona de delivery '{$zona->Zona_DeliveryNombre}' está inactiva y no permite despachos.",
+                    ]);
+                }
+
+                $costoDelivery = (float) $zona->Zona_DeliveryTarifa;
+
+                // Principio 3 — Dirección congelada en el pedido
+                $direccionEntrega = trim($datos['direccion_entrega'] ?? $datos['PedidoDireccionEntrega'] ?? '');
+                if (empty($direccionEntrega)) {
+                    $direccionEntrega = trim($cliente->ClienteDireccion ?? '');
+                }
+
+                if (empty($direccionEntrega)) {
+                    throw ValidationException::withMessages([
+                        'direccion_entrega' => 'Debe registrar una dirección de entrega para pedidos con delivery.',
+                    ]);
+                }
+
+                $referenciaEntrega = trim($datos['referencia_entrega'] ?? $datos['PedidoReferenciaEntrega'] ?? '');
+            }
+
+            // 4. Calcular IGV (18%) y Total (Incluyendo Delivery)
             $igvGeneral = round($subtotalGeneral * 0.18, 2);
-            $totalGeneral = round($subtotalGeneral + $igvGeneral, 2);
+            $totalGeneral = round($subtotalGeneral + $igvGeneral + $costoDelivery, 2);
 
             // 5. Crear el encabezado del Pedido con Telemetría e Indicadores de Tesis
             $acuerdoComercial = !empty($datos['acuerdo_comercial']) 
@@ -265,6 +340,15 @@ class PedidoService
                 'Pedido_ClienteId' => $clienteId,
                 'Pedido_canal_pedidoId' => $canalId,
                 'PedidoOrigenIA' => $origenIA,
+                // Delivery y Fecha de Entrega
+                'PedidoFechaEntrega'             => $fechaEntrega,
+                'PedidoEsDelivery'               => $esDelivery ? 'S' : 'N',
+                'PedidoDireccionEntrega'         => $direccionEntrega,
+                'PedidoLatitudEntrega'           => $esDelivery ? ($datos['latitud'] ?? $datos['PedidoLatitudEntrega'] ?? null) : null,
+                'PedidoLongitudEntrega'          => $esDelivery ? ($datos['longitud'] ?? $datos['PedidoLongitudEntrega'] ?? null) : null,
+                'PedidoReferenciaEntrega'        => $referenciaEntrega,
+                'PedidoZonaDeliveryId'           => $zonaDeliveryId,
+                'PedidoCostoDelivery'            => $costoDelivery,
                 // KPI Telemetría y Despacho
                 'PedidoEstadoDespacho'           => 'PENDIENTE',
                 'PedidoFechaInicioPreparacion'   => now(),
@@ -336,7 +420,7 @@ class PedidoService
                 ], $auditDetalle));
             }
 
-            return $pedido->fresh(['cliente', 'canalPedido', 'detalles.producto', 'detalles.unidadMedida']);
+            return $pedido->fresh(['cliente', 'canalPedido', 'zonaDelivery', 'detalles.producto', 'detalles.unidadMedida']);
         });
     }
 
@@ -365,6 +449,119 @@ class PedidoService
                 $canal = CanalPedido::where('Canal_pedidoId', $canalId)->where('Canal_pedidoEliminado', 'N')->first();
                 if ($canal) {
                     $camposActualizar['Pedido_canal_pedidoId'] = $canalId;
+                }
+            }
+
+            // Fecha de Entrega
+            if (array_key_exists('fecha_entrega', $datos) || array_key_exists('PedidoFechaEntrega', $datos)) {
+                $rawFechaEntrega = $datos['fecha_entrega'] ?? $datos['PedidoFechaEntrega'];
+                if (!empty($rawFechaEntrega)) {
+                    $fechaParsed = \Carbon\Carbon::parse($rawFechaEntrega)->startOfDay();
+                    if ($fechaParsed->lt(\Carbon\Carbon::today())) {
+                        throw ValidationException::withMessages([
+                            'fecha_entrega' => 'La fecha de entrega no puede ser anterior a la fecha actual.',
+                        ]);
+                    }
+                    $camposActualizar['PedidoFechaEntrega'] = $fechaParsed->toDateTimeString();
+                } else {
+                    $camposActualizar['PedidoFechaEntrega'] = null;
+                }
+            }
+
+            // Manejo de Delivery en edición (Permite conmutar entre Delivery y Recojo en Tienda)
+            $huboCambioDelivery = false;
+            if (array_key_exists('es_delivery', $datos) || array_key_exists('PedidoEsDelivery', $datos)) {
+                $esDeliv = false;
+                if (isset($datos['es_delivery'])) {
+                    $esDeliv = filter_var($datos['es_delivery'], FILTER_VALIDATE_BOOLEAN) || in_array(strtoupper((string)$datos['es_delivery']), ['S', '1', 'TRUE']);
+                } elseif (isset($datos['PedidoEsDelivery'])) {
+                    $esDeliv = in_array(strtoupper((string)$datos['PedidoEsDelivery']), ['S', '1', 'TRUE']);
+                }
+
+                if ($esDeliv) {
+                    $subtotalProds = (float) DetallePedidoProductos::where('Detalle_Pedido_Productos_PedidoId', $pedido->PedidoId)
+                        ->where('Detalle_Pedido_ProductosEliminado', 'N')
+                        ->sum('Detalle_Pedido_Productos_subtotal');
+
+                    if ($subtotalProds < 100.00) {
+                        throw ValidationException::withMessages([
+                            'es_delivery' => 'El servicio de delivery requiere un monto mínimo de S/ 100.00 en productos. Subtotal actual: S/ ' . number_format($subtotalProds, 2),
+                        ]);
+                    }
+
+                    $zonaId = !empty($datos['zona_delivery_id']) 
+                        ? trim($datos['zona_delivery_id']) 
+                        : (!empty($datos['PedidoZonaDeliveryId']) ? trim($datos['PedidoZonaDeliveryId']) : $pedido->PedidoZonaDeliveryId);
+
+                    if (empty($zonaId)) {
+                        throw ValidationException::withMessages([
+                            'zona_delivery_id' => 'Debe seleccionar una zona de delivery.',
+                        ]);
+                    }
+
+                    $zona = \App\Models\ZonaDelivery::where('Zona_DeliveryId', $zonaId)->first();
+                    if (!$zona || !$zona->esActiva()) {
+                        throw ValidationException::withMessages([
+                            'zona_delivery_id' => 'La zona de delivery seleccionada no existe o se encuentra inactiva.',
+                        ]);
+                    }
+
+                    $dirEntrega = trim($datos['direccion_entrega'] ?? $datos['PedidoDireccionEntrega'] ?? $pedido->PedidoDireccionEntrega ?? '');
+                    if (empty($dirEntrega)) {
+                        throw ValidationException::withMessages([
+                            'direccion_entrega' => 'Debe ingresar una dirección de entrega para pedidos con delivery.',
+                        ]);
+                    }
+
+                    $refEntrega = trim($datos['referencia_entrega'] ?? $datos['PedidoReferenciaEntrega'] ?? $pedido->PedidoReferenciaEntrega ?? '');
+
+                    $camposActualizar['PedidoEsDelivery'] = 'S';
+                    $camposActualizar['PedidoZonaDeliveryId'] = $zonaId;
+                    $camposActualizar['PedidoCostoDelivery'] = (float) $zona->Zona_DeliveryTarifa;
+                    $camposActualizar['PedidoDireccionEntrega'] = $dirEntrega;
+                    $camposActualizar['PedidoReferenciaEntrega'] = $refEntrega;
+                    if (array_key_exists('latitud', $datos) || array_key_exists('PedidoLatitudEntrega', $datos)) {
+                        $camposActualizar['PedidoLatitudEntrega'] = isset($datos['latitud']) ? (float)$datos['latitud'] : (isset($datos['PedidoLatitudEntrega']) ? (float)$datos['PedidoLatitudEntrega'] : null);
+                    }
+                    if (array_key_exists('longitud', $datos) || array_key_exists('PedidoLongitudEntrega', $datos)) {
+                        $camposActualizar['PedidoLongitudEntrega'] = isset($datos['longitud']) ? (float)$datos['longitud'] : (isset($datos['PedidoLongitudEntrega']) ? (float)$datos['PedidoLongitudEntrega'] : null);
+                    }
+                    $huboCambioDelivery = true;
+                } else {
+                    // Requerimiento 4: Desactivar delivery y pasar a "Recojo en Tienda"
+                    $camposActualizar['PedidoEsDelivery'] = 'N';
+                    $camposActualizar['PedidoZonaDeliveryId'] = null;
+                    $camposActualizar['PedidoCostoDelivery'] = 0.00;
+                    $camposActualizar['PedidoDireccionEntrega'] = null;
+                    $camposActualizar['PedidoLatitudEntrega'] = null;
+                    $camposActualizar['PedidoLongitudEntrega'] = null;
+                    $camposActualizar['PedidoReferenciaEntrega'] = null;
+                    $huboCambioDelivery = true;
+                }
+            } elseif ($pedido->PedidoEsDelivery === 'S') {
+                if (isset($datos['zona_delivery_id']) || isset($datos['PedidoZonaDeliveryId'])) {
+                    $zonaId = trim($datos['zona_delivery_id'] ?? $datos['PedidoZonaDeliveryId']);
+                    $zona = \App\Models\ZonaDelivery::where('Zona_DeliveryId', $zonaId)->first();
+                    if (!$zona || !$zona->esActiva()) {
+                        throw ValidationException::withMessages([
+                            'zona_delivery_id' => 'La zona de delivery seleccionada no existe o está inactiva.',
+                        ]);
+                    }
+                    $camposActualizar['PedidoZonaDeliveryId'] = $zonaId;
+                    $camposActualizar['PedidoCostoDelivery'] = (float) $zona->Zona_DeliveryTarifa;
+                    $huboCambioDelivery = true;
+                }
+                if (isset($datos['direccion_entrega']) || isset($datos['PedidoDireccionEntrega'])) {
+                    $camposActualizar['PedidoDireccionEntrega'] = trim($datos['direccion_entrega'] ?? $datos['PedidoDireccionEntrega']);
+                }
+                if (array_key_exists('latitud', $datos) || array_key_exists('PedidoLatitudEntrega', $datos)) {
+                    $camposActualizar['PedidoLatitudEntrega'] = isset($datos['latitud']) ? (float)$datos['latitud'] : (isset($datos['PedidoLatitudEntrega']) ? (float)$datos['PedidoLatitudEntrega'] : null);
+                }
+                if (array_key_exists('longitud', $datos) || array_key_exists('PedidoLongitudEntrega', $datos)) {
+                    $camposActualizar['PedidoLongitudEntrega'] = isset($datos['longitud']) ? (float)$datos['longitud'] : (isset($datos['PedidoLongitudEntrega']) ? (float)$datos['PedidoLongitudEntrega'] : null);
+                }
+                if (isset($datos['referencia_entrega']) || isset($datos['PedidoReferenciaEntrega'])) {
+                    $camposActualizar['PedidoReferenciaEntrega'] = trim($datos['referencia_entrega'] ?? $datos['PedidoReferenciaEntrega']);
                 }
             }
 
@@ -464,7 +661,11 @@ class PedidoService
 
             $this->pedidoRepository->update($id, $camposKpi);
 
-            return $pedido->fresh(['cliente', 'canalPedido', 'detalles.producto', 'detalles.unidadMedida']);
+            if ($huboCambioDelivery && empty($acciones)) {
+                $this->recalcularTotalesPedido($pedido);
+            }
+
+            return $pedido->fresh(['cliente', 'canalPedido', 'zonaDelivery', 'detalles.producto', 'detalles.unidadMedida']);
         });
     }
 
@@ -621,12 +822,14 @@ class PedidoService
 
     protected function recalcularTotalesPedido(Pedido $pedido): void
     {
+        $pedido->refresh();
         $subtotal = (float) DetallePedidoProductos::where('Detalle_Pedido_Productos_PedidoId', $pedido->PedidoId)
             ->where('Detalle_Pedido_ProductosEliminado', 'N')
             ->sum('Detalle_Pedido_Productos_subtotal');
 
         $igv = round($subtotal * 0.18, 2);
-        $total = round($subtotal + $igv, 2);
+        $costoDelivery = ($pedido->PedidoEsDelivery === 'S') ? (float) ($pedido->PedidoCostoDelivery ?? 0.00) : 0.00;
+        $total = round($subtotal + $igv + $costoDelivery, 2);
 
         $pedido->update([
             'PedidoTotal' => $total,

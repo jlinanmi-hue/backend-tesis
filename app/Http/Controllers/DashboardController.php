@@ -45,6 +45,36 @@ class DashboardController extends Controller
     }
 
     /**
+     * Dashboard Ejecutivo Consolidado (10 Bloques de Negocio)
+     * GET /api/dashboard/ejecutivo
+     */
+    public function ejecutivo(Request $request): JsonResponse
+    {
+        try {
+            $filters = [
+                'dias'     => $request->query('dias', 7),
+                'canal_id' => $request->query('canal_id'),
+                'zona_id'  => $request->query('zona_id'),
+            ];
+
+            $data = $this->service->getExecutiveDashboard($filters);
+
+            return response()->json([
+                'success' => true,
+                'data'    => $data,
+                'message' => 'Resumen ejecutivo del dashboard obtenido exitosamente.',
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'error'   => 'server_error',
+                'message' => 'No se pudo cargar el resumen ejecutivo: ' . $e->getMessage(),
+                'data'    => null,
+            ], 500);
+        }
+    }
+
+    /**
      * Nivel 2: Subgráficos detallados (A, B, C, D) del indicador seleccionado
      * GET /api/dashboard/indicator/{id}
      */

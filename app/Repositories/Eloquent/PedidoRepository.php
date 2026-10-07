@@ -14,7 +14,7 @@ class PedidoRepository implements PedidoRepositoryInterface
     public function getAll(array $filters = [], int $perPage = 15): LengthAwarePaginator|Collection
     {
         $query = Pedido::query()
-            ->with(['cliente', 'canalPedido', 'detalles.producto', 'detalles.unidadMedida']);
+            ->with(['cliente', 'canalPedido', 'zonaDelivery', 'detalles.producto', 'detalles.unidadMedida']);
 
         if (empty($filters['include_deleted'])) {
             $query->where('PedidoEliminado', 'N');
@@ -76,7 +76,7 @@ class PedidoRepository implements PedidoRepositoryInterface
     public function findById(string $id, bool $includeDeleted = false): ?Pedido
     {
         $query = Pedido::query()
-            ->with(['cliente', 'canalPedido', 'detalles.producto', 'detalles.unidadMedida'])
+            ->with(['cliente', 'canalPedido', 'zonaDelivery', 'detalles.producto', 'detalles.unidadMedida'])
             ->where('PedidoId', $id);
 
         if (!$includeDeleted) {
@@ -111,7 +111,7 @@ class PedidoRepository implements PedidoRepositoryInterface
         $data = array_merge($data, $audit);
 
         $pedido->update($data);
-        return $pedido->fresh(['cliente', 'canalPedido', 'detalles.producto', 'detalles.unidadMedida']);
+        return $pedido->fresh(['cliente', 'canalPedido', 'zonaDelivery', 'detalles.producto', 'detalles.unidadMedida']);
     }
 
     public function delete(string $id): bool

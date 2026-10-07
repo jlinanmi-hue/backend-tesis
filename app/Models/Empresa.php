@@ -29,6 +29,9 @@ class Empresa extends Model
         'EmpresaLogo',
         'EmpresaMensajeTicket',
         'EmpresaEstado',
+        'EmpresaLatitud',
+        'EmpresaLongitud',
+        'EmpresaZonaReferencia',
         'EmpresaUsuarioCreacion',
         'EmpresaHostCreacion',
         'EmpresaFechaCreacion',
@@ -39,6 +42,8 @@ class Empresa extends Model
 
     protected $casts = [
         'Id_Empresa' => 'integer',
+        'EmpresaLatitud' => 'float',
+        'EmpresaLongitud' => 'float',
         'EmpresaFechaCreacion' => 'datetime',
         'EmpresaFechaModificacion' => 'datetime',
     ];

@@ -32,7 +32,32 @@ class PedidoResource extends JsonResource
             'fecha_formateada' => $this->PedidoFecha_pedido?->format('d/m/Y H:i'),
             'total' => (float) $this->PedidoTotal,
             'igv' => (float) $this->PedidoIgv,
-            'subtotal' => round((float) $this->PedidoTotal - (float) $this->PedidoIgv, 2),
+            'subtotal' => round((float) $this->PedidoTotal - (float) $this->PedidoIgv - (float) ($this->PedidoCostoDelivery ?? 0.00), 2),
+            'subtotal_productos' => round((float) $this->PedidoTotal - (float) $this->PedidoIgv - (float) ($this->PedidoCostoDelivery ?? 0.00), 2),
+            'costo_delivery' => (float) ($this->PedidoCostoDelivery ?? 0.00),
+            'es_delivery' => ($this->PedidoEsDelivery === 'S'),
+            'fecha_entrega' => $this->PedidoFechaEntrega ? \Carbon\Carbon::parse($this->PedidoFechaEntrega)->format('Y-m-d') : null,
+            'fecha_entrega_formateada' => $this->PedidoFechaEntrega ? \Carbon\Carbon::parse($this->PedidoFechaEntrega)->format('d/m/Y') : null,
+            'direccion_entrega' => $this->PedidoDireccionEntrega,
+            'referencia_entrega' => $this->PedidoReferenciaEntrega,
+            'latitud_entrega' => $this->PedidoLatitudEntrega ? (float) $this->PedidoLatitudEntrega : null,
+            'longitud_entrega' => $this->PedidoLongitudEntrega ? (float) $this->PedidoLongitudEntrega : null,
+            'link_google_maps' => ($this->PedidoLatitudEntrega && $this->PedidoLongitudEntrega)
+                ? "https://www.google.com/maps?q={$this->PedidoLatitudEntrega},{$this->PedidoLongitudEntrega}"
+                : null,
+            'link_waze' => ($this->PedidoLatitudEntrega && $this->PedidoLongitudEntrega)
+                ? "https://waze.com/ul?ll={$this->PedidoLatitudEntrega},{$this->PedidoLongitudEntrega}&navigate=yes"
+                : null,
+            'zona_delivery_id' => $this->PedidoZonaDeliveryId,
+            'zona_delivery' => $this->whenLoaded('zonaDelivery', function () {
+                if (!$this->zonaDelivery) return null;
+                return [
+                    'id' => $this->zonaDelivery->Zona_DeliveryId,
+                    'nombre' => $this->zonaDelivery->Zona_DeliveryNombre,
+                    'tarifa' => (float) $this->zonaDelivery->Zona_DeliveryTarifa,
+                    'estado' => $this->zonaDelivery->Zona_DeliveryEstado,
+                ];
+            }),
             'usuario_registro' => $this->PedidoUsuarioRegistro,
             'usuario_registro_nombre' => AuditHelper::resolverNombreUsuario($this->PedidoUsuarioRegistro),
             'usuario_creador' => AuditHelper::resolverNombreUsuario($this->PedidoUsuarioCreacion ?? $this->PedidoUsuarioRegistro),

@@ -66,12 +66,25 @@ class Pedido extends Model
         'PedidoDispositivo',
         'PedidoTipoCliente',
         'PedidoIntentosCorreccion',
+        // DELIVERY Y FECHA PROGRAMADA DE ENTREGA
+        'PedidoFechaEntrega',
+        'PedidoEsDelivery',
+        'PedidoDireccionEntrega',
+        'PedidoLatitudEntrega',
+        'PedidoLongitudEntrega',
+        'PedidoReferenciaEntrega',
+        'PedidoZonaDeliveryId',
+        'PedidoCostoDelivery',
     ];
 
     protected $casts = [
         'PedidoFecha_pedido' => 'datetime',
+        'PedidoFechaEntrega' => 'datetime',
         'PedidoTotal' => 'decimal:2',
         'PedidoIgv' => 'decimal:2',
+        'PedidoCostoDelivery' => 'decimal:2',
+        'PedidoLatitudEntrega' => 'float',
+        'PedidoLongitudEntrega' => 'float',
         'PedidoFechaCreacion' => 'datetime',
         'PedidoFechaModificacion' => 'datetime',
         'PedidoFechaEliminacion' => 'datetime',
@@ -126,6 +139,16 @@ class Pedido extends Model
     public function pedidoOriginal(): BelongsTo
     {
         return $this->belongsTo(Pedido::class, 'PedidoIdOriginal', 'PedidoId');
+    }
+
+    public function zonaDelivery(): BelongsTo
+    {
+        return $this->belongsTo(ZonaDelivery::class, 'PedidoZonaDeliveryId', 'Zona_DeliveryId');
+    }
+
+    public function esDelivery(): bool
+    {
+        return strtoupper((string) $this->PedidoEsDelivery) === 'S';
     }
 
     // Scopes

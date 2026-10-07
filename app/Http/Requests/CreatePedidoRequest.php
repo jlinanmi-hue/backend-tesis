@@ -47,6 +47,20 @@ class CreatePedidoRequest extends FormRequest
             'origen_ia_confianza' => 'nullable|numeric|between:0,100',
             'modelo_ia_utilizado' => 'nullable|string|max:50',
             'telemetria' => 'nullable|array',
+            'fecha_entrega' => 'nullable|date',
+            'PedidoFechaEntrega' => 'nullable|date',
+            'es_delivery' => 'nullable',
+            'PedidoEsDelivery' => 'nullable|string|in:S,N,s,n',
+            'zona_delivery_id' => 'nullable|string|max:20',
+            'PedidoZonaDeliveryId' => 'nullable|string|max:20',
+            'direccion_entrega' => 'nullable|string|max:300',
+            'PedidoDireccionEntrega' => 'nullable|string|max:300',
+            'latitud' => 'nullable|numeric',
+            'longitud' => 'nullable|numeric',
+            'PedidoLatitudEntrega' => 'nullable|numeric',
+            'PedidoLongitudEntrega' => 'nullable|numeric',
+            'referencia_entrega' => 'nullable|string|max:200',
+            'PedidoReferenciaEntrega' => 'nullable|string|max:200',
         ];
     }
 
