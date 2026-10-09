@@ -206,4 +206,137 @@ class DashboardController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Obtener Ficha de Observación diaria para sustentar la Tesis.
+     * GET /api/dashboard/ficha-observacion
+     * Parámetros:
+     * - indicador_id: 1 (PODE), 2 (PEOR), 3 (PRS), 4 (TBPP)
+     * - rango: 'hoy' | '7_dias' | '30_dias'
+     * - canal_id: opcional
+     */
+    public function fichaObservacion(Request $request): JsonResponse
+    {
+        try {
+            $indicadorId = (int) $request->query('indicador_id', 1);
+            $rango = (string) $request->query('rango', '7_dias');
+            $canalId = $request->query('canal_id');
+
+            $data = $this->service->getFichaObservacion($indicadorId, $rango, $canalId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'message' => 'Ficha de observación generada exitosamente.',
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al generar ficha de observación: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Ficha diaria con detalle completo orden por orden (Fichas PODE, PRS, TBPP).
+     * GET /api/dashboard/ficha-diaria-detalle
+     */
+    public function fichaDiariaDetalle(Request $request): JsonResponse
+    {
+        try {
+            $fecha = $request->query('fecha') ?: \Carbon\Carbon::today()->toDateString();
+            $indicador = $request->query('indicador', 'PODE');
+            $canalId = $request->query('canal_id');
+
+            $data = $this->service->getFichaDiariaDetalle($fecha, $indicador, $canalId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'message' => 'Detalle diario obtenido exitosamente.',
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener detalle diario: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Reporte consolidado semanal o mensual sobre totales de período (Tesis).
+     * GET /api/dashboard/reporte-consolidado
+     */
+    public function reporteConsolidado(Request $request): JsonResponse
+    {
+        try {
+            $tipo = $request->query('tipo', 'semanal');
+            $anio = $request->query('anio') ? (int)$request->query('anio') : (int)date('Y');
+            $canalId = $request->query('canal_id');
+
+            $data = $this->service->getReporteConsolidado($tipo, $anio, $canalId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'message' => 'Reporte consolidado obtenido exitosamente.',
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener reporte consolidado: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Detalle diario desglosado por semana con totales consolidados al final.
+     * GET /api/dashboard/detalle-diario-semana
+     */
+    public function detalleDiarioPorSemana(Request $request): JsonResponse
+    {
+        try {
+            $anio = (int)$request->query('anio', date('Y'));
+            $semana = (int)$request->query('semana', 37);
+            $canalId = $request->query('canal_id');
+
+            $data = $this->service->getDetalleDiarioPorSemana($anio, $semana, $canalId);
+
+            return response()->json([
+                'success' => true,
+                'data' => $data,
+                'message' => 'Detalle diario por semana obtenido exitosamente.',
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al obtener detalle diario por semana: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Listar semanas registradas para un año específico.
+     * GET /api/dashboard/semanas-del-anio
+     */
+    public function semanasDelAnio(Request $request): JsonResponse
+    {
+        try {
+            $anio = (int)$request->query('anio', date('Y'));
+            $semanas = $this->service->getSemanasDelAnio($anio);
+
+            return response()->json([
+                'success' => true,
+                'data' => $semanas,
+                'message' => 'Semanas obtenidas exitosamente.',
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al listar semanas del año: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }
+
+

@@ -68,6 +68,8 @@ class PedidoResource extends JsonResource
             'tiene_error' => ($this->PedidoTieneError === 'S'),
             'tipo_error' => $this->PedidoTipoError,
             'acuerdo_comercial' => $this->PedidoAcuerdo_Comercial,
+            'tipo_registro' => (stripos((string)$this->PedidoAcuerdo_Comercial, 'cotiza') !== false) ? 'Cotización' : 'Pedido',
+            'es_cotizacion' => (stripos((string)$this->PedidoAcuerdo_Comercial, 'cotiza') !== false),
             'tiempo' => [
                 'timeout_limite_horas' => $timeoutHoras,
                 'horas_transcurridas' => $horasTranscurridas,

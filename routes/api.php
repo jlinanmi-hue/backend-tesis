@@ -44,6 +44,11 @@ Route::prefix('dashboard')->group(function () {
     Route::get('/compare', [DashboardController::class, 'compare']);
     Route::get('/indicadores', [DashboardController::class, 'indicadores']);
     Route::get('/tokens', [DashboardController::class, 'tokenConsumption']);
+    Route::get('/ficha-observacion', [DashboardController::class, 'fichaObservacion']);
+    Route::get('/ficha-diaria-detalle', [DashboardController::class, 'fichaDiariaDetalle']);
+    Route::get('/reporte-consolidado', [DashboardController::class, 'reporteConsolidado']);
+    Route::get('/detalle-diario-semana', [DashboardController::class, 'detalleDiarioPorSemana']);
+    Route::get('/semanas-del-anio', [DashboardController::class, 'semanasDelAnio']);
 });
 
 // 2. Rutas del Módulo de Gestión de Personal / Usuarios

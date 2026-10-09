@@ -76,10 +76,14 @@ class PedidoController extends Controller
         try {
             $pedido = $this->pedidoService->crearPedido($request->validated());
 
+            $msg = ($pedido->PedidoAcuerdo_Comercial === 'Cotización')
+                ? "Cotización {$pedido->PedidoId} registrada exitosamente. El stock permanece intacto."
+                : "Orden de cliente {$pedido->PedidoId} creada exitosamente. Stock reservado y descontado del Kárdex.";
+
             return response()->json([
                 'success' => true,
                 'data' => new PedidoResource($pedido),
-                'message' => "Orden de cliente {$pedido->PedidoId} creada exitosamente. Stock reservado y descontado del Kárdex.",
+                'message' => $msg,
             ], 201);
         } catch (ValidationException $e) {
             return response()->json([

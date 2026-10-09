@@ -100,6 +100,13 @@ class PedidoService
             $subtotalGeneral = 0.00;
             $itemsParaProcesar = [];
 
+            // Determinar Tipo de Registro: 'Cotización' o 'Pedido'
+            $acuerdoRaw = !empty($datos['acuerdo_comercial']) 
+                ? trim($datos['acuerdo_comercial']) 
+                : (!empty($datos['PedidoAcuerdo_Comercial']) ? trim($datos['PedidoAcuerdo_Comercial']) : 'Pedido');
+            $esCotizacion = in_array(mb_strtoupper($acuerdoRaw), ['COTIZACION', 'COTIZACIÓN', 'COT']) || (stripos($acuerdoRaw, 'cotiza') !== false);
+            $acuerdoComercial = $esCotizacion ? 'Cotización' : 'Pedido';
+
             // Primera pasada: Bloqueo y validación de stock físico con Factor de Conversión
             foreach ($detallesInput as $idx => $item) {
                 $productoId = trim($item['producto_id'] ?? '');
@@ -147,7 +154,8 @@ class PedidoService
 
                 $stockFisico = max(0.0, (float) $producto->ProductoStockActual);
 
-                if ($cantidadBase > $stockFisico) {
+                // Solo se valida stock si es un Pedido real (en Cotización el stock permanece intacto)
+                if (!$esCotizacion && $cantidadBase > $stockFisico) {
                     try {
                         app(RoturaStockService::class)->registrarIntento([
                             'producto_id'         => $productoId,
@@ -164,7 +172,8 @@ class PedidoService
                     ]);
                 }
 
-                $cantFisica = $cantidadBase;
+                // Si es cotización, no descuenta stock físico (cant_fisica = 0)
+                $cantFisica = $esCotizacion ? 0.00 : $cantidadBase;
 
                 // Determinar precio unitario de venta (precio por la presentación vendida)
                 $precioUnitario = isset($item['precio_unitario']) && (float)$item['precio_unitario'] > 0
@@ -269,9 +278,7 @@ class PedidoService
             $totalGeneral = round($subtotalGeneral + $igvGeneral + $costoDelivery, 2);
 
             // 5. Crear el encabezado del Pedido con Telemetría e Indicadores de Tesis
-            $acuerdoComercial = !empty($datos['acuerdo_comercial']) 
-                ? trim($datos['acuerdo_comercial']) 
-                : (!empty($datos['PedidoAcuerdo_Comercial']) ? trim($datos['PedidoAcuerdo_Comercial']) : 'Contado');
+            // $acuerdoComercial ya fue resuelto arriba como 'Cotización' o 'Pedido'
 
             $usuarioRegistro = $datos['usuario_registro'] 
                 ?? auth()->user()?->UsuarioUsername 
@@ -375,34 +382,34 @@ class PedidoService
                 $precioUnitario = $item['precio_unitario'];
                 $subtotal = $item['subtotal'];
 
-                // 1. Descontar stock físico en unidades base atómicamente si hubo porción física
-                if ($cantFisica > 0) {
+                // 1 y 2. Descontar stock físico y registrar salida en Kárdex (solo si es Pedido real, nunca en Cotización)
+                if (!$esCotizacion && $cantFisica > 0) {
                     $producto->decrement('ProductoStockActual', $cantFisica);
-                }
-                // Asegurar que el stock físico no sea negativo
-                if ((float) $producto->fresh()->ProductoStockActual < 0) {
-                    $producto->update(['ProductoStockActual' => 0.00]);
-                }
-                $nuevoStockFisico = (float) $producto->fresh()->ProductoStockActual;
+                    // Asegurar que el stock físico no sea negativo
+                    if ((float) $producto->fresh()->ProductoStockActual < 0) {
+                        $producto->update(['ProductoStockActual' => 0.00]);
+                    }
+                    $nuevoStockFisico = (float) $producto->fresh()->ProductoStockActual;
 
-                // 2. Registrar salida en Kárdex (Movimiento_producto) con factor y unidad real
-                $movimientoId = $this->inventarioService->getNextMovimientoId();
-                $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
+                    // Registrar salida en Kárdex (Movimiento_producto)
+                    $movimientoId = $this->inventarioService->getNextMovimientoId();
+                    $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
 
-                MovimientoProducto::create(array_merge([
-                    'Movimiento_productoId' => $movimientoId,
-                    'Movimiento_productoCantidadPresentacion' => (string) $cantidad,
-                    'Movimiento_productoDocumentoOperacionId' => $pedidoId,
-                    'Movimiento_productoTipoMovimiento' => 'S', // S = Salida por Venta / Pedido
-                    'Movimiento_productoCostoPrecioUnitario' => (string) $precioUnitario,
-                    'Movimiento_productoCantidadEntrada' => '0',
-                    'Movimiento_productoCantidadSalida' => (string) $cantFisica,
-                    'Movimiento_productoCantidadSaldo' => (string) $nuevoStockFisico,
-                    'Movimiento_productoFecha_Movimiento' => now(),
-                    'Movimiento_producto_ProductoId' => $producto->ProductoId,
-                    'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $unidadId,
-                    'Movimiento_productoEliminado' => 'N',
-                ], $auditMov));
+                    MovimientoProducto::create(array_merge([
+                        'Movimiento_productoId' => $movimientoId,
+                        'Movimiento_productoCantidadPresentacion' => (string) $cantidad,
+                        'Movimiento_productoDocumentoOperacionId' => $pedidoId,
+                        'Movimiento_productoTipoMovimiento' => 'S', // S = Salida por Venta / Pedido
+                        'Movimiento_productoCostoPrecioUnitario' => (string) $precioUnitario,
+                        'Movimiento_productoCantidadEntrada' => '0',
+                        'Movimiento_productoCantidadSalida' => (string) $cantFisica,
+                        'Movimiento_productoCantidadSaldo' => (string) $nuevoStockFisico,
+                        'Movimiento_productoFecha_Movimiento' => now(),
+                        'Movimiento_producto_ProductoId' => $producto->ProductoId,
+                        'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $unidadId,
+                        'Movimiento_productoEliminado' => 'N',
+                    ], $auditMov));
+                }
 
                 // 3. Registrar Detalle_Pedido_Productos con unidad, factor y desglose físico
                 $auditDetalle = AuditHelper::getCreationAudit('Detalle_Pedido_Productos');
@@ -441,7 +448,124 @@ class PedidoService
             $camposActualizar = [];
 
             if (isset($datos['acuerdo_comercial']) || isset($datos['PedidoAcuerdo_Comercial'])) {
-                $camposActualizar['PedidoAcuerdo_Comercial'] = $datos['acuerdo_comercial'] ?? $datos['PedidoAcuerdo_Comercial'];
+                $nuevoAcuerdoRaw = trim((string)($datos['acuerdo_comercial'] ?? $datos['PedidoAcuerdo_Comercial']));
+                $nuevoEsCotizacion = in_array(mb_strtoupper($nuevoAcuerdoRaw), ['COTIZACION', 'COTIZACIÓN', 'COT']) || (stripos($nuevoAcuerdoRaw, 'cotiza') !== false);
+                $nuevoAcuerdo = $nuevoEsCotizacion ? 'Cotización' : 'Pedido';
+
+                $eraCotizacion = in_array(mb_strtoupper(trim((string)$pedido->PedidoAcuerdo_Comercial)), ['COTIZACION', 'COTIZACIÓN', 'COT']) || (stripos((string)$pedido->PedidoAcuerdo_Comercial, 'cotiza') !== false);
+
+                // TRANSICIÓN 1: De Cotización a Pedido -> Validar y descontar stock físico, registrar Kárdex
+                if ($eraCotizacion && !$nuevoEsCotizacion) {
+                    $detalles = DetallePedidoProductos::where('Detalle_Pedido_Productos_PedidoId', $pedido->PedidoId)
+                        ->where('Detalle_Pedido_ProductosEliminado', 'N')
+                        ->with('producto')
+                        ->get();
+
+                    // A. Validar stock disponible para todos los productos de la orden
+                    foreach ($detalles as $det) {
+                        $producto = $det->producto;
+                        if (!$producto) {
+                            throw ValidationException::withMessages([
+                                'stock' => "Uno de los productos de la orden ya no existe o está inactivo.",
+                            ]);
+                        }
+                        $cantRequerida = (float)$det->Detalle_Pedido_Productos_cantidad_base;
+                        if ($cantRequerida <= 0) {
+                            $cantRequerida = (float)$det->Detalle_Pedido_Productos_cantidad * (float)($det->Detalle_Pedido_Productos_factor_conversion ?: 1);
+                        }
+                        $stockFisico = max(0.0, (float)$producto->ProductoStockActual);
+                        if ($cantRequerida > $stockFisico) {
+                            try {
+                                app(RoturaStockService::class)->registrarIntento([
+                                    'producto_id'         => $producto->ProductoId,
+                                    'cantidad_solicitada' => $cantRequerida,
+                                    'cantidad_disponible' => $stockFisico,
+                                    'cantidad_faltante'   => round($cantRequerida - $stockFisico, 2),
+                                    'usuario'             => auth()->user()?->UsuarioUsername ?? 'ADMIN',
+                                    'observaciones'       => "Intento de convertir cotización {$pedido->PedidoId} a pedido con stock insuficiente en {$producto->ProductoNombre}",
+                                ]);
+                            } catch (\Throwable $e) {}
+
+                            throw ValidationException::withMessages([
+                                'stock' => "Stock insuficiente para convertir cotización a pedido en '{$producto->ProductoNombre}'. Requerido: {$cantRequerida}, Stock Disponible: {$stockFisico}.",
+                            ]);
+                        }
+                    }
+
+                    // B. Descontar stock y registrar movimiento 'S' en Kárdex
+                    foreach ($detalles as $det) {
+                        $producto = $det->producto;
+                        $cantRequerida = (float)$det->Detalle_Pedido_Productos_cantidad_base;
+                        if ($cantRequerida <= 0) {
+                            $cantRequerida = (float)$det->Detalle_Pedido_Productos_cantidad * (float)($det->Detalle_Pedido_Productos_factor_conversion ?: 1);
+                        }
+                        $producto->decrement('ProductoStockActual', $cantRequerida);
+                        if ((float)$producto->fresh()->ProductoStockActual < 0) {
+                            $producto->update(['ProductoStockActual' => 0.00]);
+                        }
+                        $nuevoStockFisico = (float)$producto->fresh()->ProductoStockActual;
+
+                        $movimientoId = $this->inventarioService->getNextMovimientoId();
+                        $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
+                        MovimientoProducto::create(array_merge([
+                            'Movimiento_productoId' => $movimientoId,
+                            'Movimiento_productoCantidadPresentacion' => (string)$det->Detalle_Pedido_Productos_cantidad,
+                            'Movimiento_productoDocumentoOperacionId' => $pedido->PedidoId,
+                            'Movimiento_productoTipoMovimiento' => 'S',
+                            'Movimiento_productoCostoPrecioUnitario' => (string)$det->Detalle_Pedido_Productos_precio_unitario_venta,
+                            'Movimiento_productoCantidadEntrada' => '0',
+                            'Movimiento_productoCantidadSalida' => (string)$cantRequerida,
+                            'Movimiento_productoCantidadSaldo' => (string)$nuevoStockFisico,
+                            'Movimiento_productoFecha_Movimiento' => now(),
+                            'Movimiento_producto_ProductoId' => $producto->ProductoId,
+                            'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $det->Detalle_Pedido_Productos_unidades_medidaId ?: 'UND-00001',
+                            'Movimiento_productoEliminado' => 'N',
+                        ], $auditMov));
+
+                        $det->update([
+                            'Detalle_Pedido_Productos_cantidad_fisica' => $cantRequerida,
+                        ]);
+                    }
+                }
+                // TRANSICIÓN 2: De Pedido a Cotización -> Revertir stock físico y asentar contra-movimiento en Kárdex
+                elseif (!$eraCotizacion && $nuevoEsCotizacion) {
+                    $detalles = DetallePedidoProductos::where('Detalle_Pedido_Productos_PedidoId', $pedido->PedidoId)
+                        ->where('Detalle_Pedido_ProductosEliminado', 'N')
+                        ->with('producto')
+                        ->get();
+
+                    foreach ($detalles as $det) {
+                        $producto = $det->producto;
+                        $cantFisica = (float)($det->Detalle_Pedido_Productos_cantidad_fisica ?: 0);
+                        if ($producto && $cantFisica > 0) {
+                            $producto->increment('ProductoStockActual', $cantFisica);
+                            $nuevoStock = (float)$producto->fresh()->ProductoStockActual;
+
+                            $movimientoId = $this->inventarioService->getNextMovimientoId();
+                            $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
+                            MovimientoProducto::create(array_merge([
+                                'Movimiento_productoId' => $movimientoId,
+                                'Movimiento_productoCantidadPresentacion' => (string)$det->Detalle_Pedido_Productos_cantidad,
+                                'Movimiento_productoDocumentoOperacionId' => 'REV-' . $pedido->PedidoId,
+                                'Movimiento_productoTipoMovimiento' => 'E',
+                                'Movimiento_productoCostoPrecioUnitario' => (string)$det->Detalle_Pedido_Productos_precio_unitario_venta,
+                                'Movimiento_productoCantidadEntrada' => (string)$cantFisica,
+                                'Movimiento_productoCantidadSalida' => '0',
+                                'Movimiento_productoCantidadSaldo' => (string)$nuevoStock,
+                                'Movimiento_productoFecha_Movimiento' => now(),
+                                'Movimiento_producto_ProductoId' => $producto->ProductoId,
+                                'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $det->Detalle_Pedido_Productos_unidades_medidaId ?: 'UND-00001',
+                                'Movimiento_productoEliminado' => 'N',
+                            ], $auditMov));
+
+                            $det->update([
+                                'Detalle_Pedido_Productos_cantidad_fisica' => 0.00,
+                            ]);
+                        }
+                    }
+                }
+
+                $camposActualizar['PedidoAcuerdo_Comercial'] = $nuevoAcuerdo;
             }
 
             if (isset($datos['canal_id']) || isset($datos['Pedido_canal_pedidoId'])) {
@@ -852,6 +976,13 @@ class PedidoService
             throw ValidationException::withMessages([
                 'estado' => "Solo se pueden completar pedidos en estado Pendiente (P). El pedido {$id} está '{$pedido->nombre_estado}'.",
             ]);
+        }
+
+        // Si la orden aún está en Cotización, convertirla a Pedido para validar y descontar el stock
+        $esCotizacion = in_array(mb_strtoupper(trim((string)$pedido->PedidoAcuerdo_Comercial)), ['COTIZACION', 'COTIZACIÓN', 'COT']) || (stripos((string)$pedido->PedidoAcuerdo_Comercial, 'cotiza') !== false);
+        if ($esCotizacion) {
+            $this->actualizarPedido($id, ['acuerdo_comercial' => 'Pedido']);
+            $pedido = $this->obtenerPedidoPorId($id);
         }
 
         $ahora = now();

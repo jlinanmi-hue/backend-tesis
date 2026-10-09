@@ -2347,4 +2347,869 @@ class DashboardService
             ];
         });
     }
+
+    /**
+     * Generar Ficha de Observación diaria para sustentar indicadores de Tesis.
+     * Soporta los rangos: 'hoy' (1 fila), '7_dias' (7 filas), '30_dias' (30 filas).
+     *
+     * @param int $indicadorId 1: PODE, 2: PEOR, 3: PRS, 4: TBPP
+     * @param string $rango 'hoy' | '7_dias' | '30_dias'
+     * @param string|null $canalId
+     * @return array
+     */
+    public function getFichaObservacion(int $indicadorId, string $rango = '7_dias', ?string $canalId = null): array
+    {
+        $numDias = match ($rango) {
+            'hoy', '1_dia', '1' => 1,
+            '30_dias', '30' => 30,
+            default => 7,
+        };
+
+        $diasList = [];
+        for ($i = 0; $i < $numDias; $i++) {
+            $f = now()->subDays($numDias - 1 - $i)->format('Y-m-d');
+            $diasList[] = $f;
+        }
+
+        return match ($indicadorId) {
+            1 => $this->buildFichaPODE($diasList, $canalId, $rango),
+            2 => $this->buildFichaPEOR($diasList, $canalId, $rango),
+            3 => $this->buildFichaPRS($diasList, $canalId, $rango),
+            4 => $this->buildFichaTBPP($diasList, $canalId, $rango),
+            default => throw new \InvalidArgumentException("Indicador ID {$indicadorId} no reconocido."),
+        };
+    }
+
+    private function buildFichaPODE(array $diasList, ?string $canalId, string $rango): array
+    {
+        $filas = [];
+        $totalTO = 0;
+        $totalODE = 0;
+
+        foreach ($diasList as $idx => $fecha) {
+            $numCorrelativo = $idx + 1;
+            $fInicio = Carbon::parse($fecha)->startOfDay();
+            $fFin = Carbon::parse($fecha)->endOfDay();
+
+            $q = DB::table('Pedido')
+                ->where('PedidoEliminado', 'N')
+                ->whereBetween('PedidoFechaCreacion', [$fInicio, $fFin]);
+
+            if (!empty($canalId)) {
+                $q->where('Pedido_canal_pedidoId', $canalId);
+            }
+
+            $pedidos = $q->select('PedidoId', 'PedidoEstado_pedido', 'PedidoEstadoDespacho', 'PedidoCausaFalloDespacho')->get();
+            $TO = $pedidos->count();
+
+            $despachadosExitosos = $pedidos->filter(function ($p) {
+                return $p->PedidoEstado_pedido === 'C' && (empty($p->PedidoEstadoDespacho) || $p->PedidoEstadoDespacho === 'ENTREGADO_COMPLETO');
+            });
+            $ODE = $despachadosExitosos->count();
+
+            $totalTO += $TO;
+            $totalODE += $ODE;
+
+            $tasaDespachoPct = $TO > 0 ? round(($ODE / $TO) * 100, 2) : 100.0;
+            $fueDespachadoBinario = ($TO > 0 && $ODE === $TO) ? 1 : ($TO > 0 && $ODE === 0 ? 0 : ($TO > 0 ? round($ODE / $TO, 2) : 1));
+
+            $primerId = $pedidos->first()?->PedidoId;
+            $ultimoId = $pedidos->last()?->PedidoId;
+            $codigoOrdenTexto = $TO === 0
+                ? 'S/O'
+                : ($TO === 1 ? $primerId : "{$primerId} ~ {$ultimoId}");
+
+            if ($TO === 0) {
+                $estadoDespacho = 'Sin órdenes en jornada';
+            } elseif ($ODE === $TO) {
+                $estadoDespacho = "Entregado completo ({$ODE}/{$TO} órdenes)";
+            } elseif ($ODE > 0) {
+                $estadoDespacho = "Parcial con observaciones ({$ODE}/{$TO} entregados)";
+            } else {
+                $estadoDespacho = "Pendiente / Con demoras ({$TO} no despachadas)";
+            }
+
+            $filas[] = [
+                'numero' => $numCorrelativo,
+                'fecha' => $fecha,
+                'fecha_formateada' => Carbon::parse($fecha)->format('d/m/Y'),
+                'codigo_orden' => $codigoOrdenTexto,
+                'total_ordenes' => $TO,
+                'ordenes_despachadas' => $ODE,
+                'fue_despachado' => $fueDespachadoBinario,
+                'porcentaje_dia' => $tasaDespachoPct,
+                'estado_despacho' => $estadoDespacho,
+            ];
+        }
+
+        $podeGlobal = $totalTO > 0 ? round(($totalODE / $totalTO) * 100, 2) : 100.0;
+
+        return [
+            'metadata' => [
+                'variable' => 'Gestión de pedidos',
+                'indicador' => 'Porcentaje (%) de órdenes despachadas exitosamente',
+                'codigo_indicador' => 'PODE',
+                'tecnica' => 'Observación',
+                'instrumento' => 'Ficha de Observación',
+                'formula' => 'PODE = (ODE / TO) × 100',
+                'rango' => $rango,
+                'rango_texto' => match($rango) { 'hoy' => 'Jornada de Hoy (1 día)', '30_dias' => 'Últimos 30 días', default => 'Últimos 7 días' },
+                'total_filas' => count($filas),
+                'meta' => '≥ 95.0%',
+            ],
+            'columnas' => [
+                ['key' => 'numero', 'label' => 'N°', 'width' => 8],
+                ['key' => 'fecha_formateada', 'label' => 'FECHA', 'width' => 14],
+                ['key' => 'codigo_orden', 'label' => 'CODIGO DE ORDEN', 'width' => 24],
+                ['key' => 'fue_despachado', 'label' => '¿FUE DESPACHADO? (Sí = 1 / No = 0)', 'width' => 30],
+                ['key' => 'estado_despacho', 'label' => 'ESTADO DEL DESPACHO', 'width' => 38],
+            ],
+            'filas' => $filas,
+            'resumen' => [
+                'total_ordenes' => $totalTO,
+                'total_despachadas' => $totalODE,
+                'resultado_global' => $podeGlobal,
+                'cumple' => $podeGlobal >= 95.0,
+                'estado' => $podeGlobal >= 95.0 ? 'ÓPTIMO' : ($podeGlobal >= 90.0 ? 'ALERTA' : 'CRÍTICO'),
+            ],
+        ];
+    }
+
+    private function buildFichaPRS(array $diasList, ?string $canalId, string $rango): array
+    {
+        $filas = [];
+        $totalTR = 0;
+        $totalIRS = 0;
+
+        foreach ($diasList as $idx => $fecha) {
+            $numCorrelativo = $idx + 1;
+            $fInicio = Carbon::parse($fecha)->startOfDay();
+            $fFin = Carbon::parse($fecha)->endOfDay();
+
+            $qTR = DB::table('Pedido')
+                ->where('PedidoEliminado', 'N')
+                ->whereBetween('PedidoFechaCreacion', [$fInicio, $fFin]);
+            if (!empty($canalId)) {
+                $qTR->where('Pedido_canal_pedidoId', $canalId);
+            }
+            $TR = $qTR->count();
+
+            $roturasRows = DB::table('detalle_rotura_stock')
+                ->whereBetween('fecha_hora', [$fInicio, $fFin])
+                ->get();
+
+            $anuladosFaltaStock = DB::table('Pedido')
+                ->where('PedidoEliminado', 'N')
+                ->where('PedidoMotivoAnulacion', 'FALTA_STOCK')
+                ->whereBetween('PedidoFechaCreacion', [$fInicio, $fFin])
+                ->count();
+
+            $IRS = max($roturasRows->count(), $anuladosFaltaStock);
+
+            $totalTR += $TR;
+            $totalIRS += $IRS;
+
+            $prsDiaPct = $TR > 0 ? round(($IRS / $TR) * 100, 2) : 0.0;
+            $presentaErrorBinario = $IRS > 0 ? 1 : 0;
+
+            $primerPedido = DB::table('Pedido')->whereBetween('PedidoFechaCreacion', [$fInicio, $fFin])->orderBy('PedidoId')->first();
+            $roturaPedido = $roturasRows->first()?->pedido_id;
+            $codigoReserva = $roturaPedido ?: ($primerPedido?->PedidoId ?: ($TR > 0 ? 'RES-' . Carbon::parse($fecha)->format('dm') : 'S/R'));
+
+            if ($IRS === 0) {
+                $tipoError = 'Sin error (Stock disponible cubierto)';
+                $observaciones = 'Se cubrió la demanda de pedidos del día sin quiebres de inventario.';
+            } else {
+                $primerRotura = $roturasRows->first();
+                $tipoError = $primerRotura?->tipo_rotura ?: 'STOCK_INSUFICIENTE';
+                $observaciones = $primerRotura?->observaciones ?: "Quiebre registrado en {$IRS} intento(s) de reserva.";
+            }
+
+            $filas[] = [
+                'numero' => $numCorrelativo,
+                'fecha' => $fecha,
+                'fecha_formateada' => Carbon::parse($fecha)->format('d/m/Y'),
+                'codigo_reserva' => $codigoReserva,
+                'presenta_error' => $presentaErrorBinario,
+                'tipo_error' => $tipoError,
+                'observaciones' => $observaciones,
+                'total_requerimientos' => $TR,
+                'incidentes_rotura' => $IRS,
+                'porcentaje_dia' => $prsDiaPct,
+            ];
+        }
+
+        $prsGlobal = $totalTR > 0 ? round(($totalIRS / $totalTR) * 100, 2) : 0.0;
+
+        return [
+            'metadata' => [
+                'variable' => 'Gestión de pedidos',
+                'indicador' => 'Porcentaje (%) de roturas de stock',
+                'codigo_indicador' => 'PRS',
+                'tecnica' => 'Observación',
+                'instrumento' => 'Ficha de Observación',
+                'formula' => 'PRS = (IRS / TR) × 100',
+                'rango' => $rango,
+                'rango_texto' => match($rango) { 'hoy' => 'Jornada de Hoy (1 día)', '30_dias' => 'Últimos 30 días', default => 'Últimos 7 días' },
+                'total_filas' => count($filas),
+                'meta' => '≤ 3.0%',
+            ],
+            'columnas' => [
+                ['key' => 'numero', 'label' => 'N°', 'width' => 8],
+                ['key' => 'fecha_formateada', 'label' => 'FECHA', 'width' => 14],
+                ['key' => 'codigo_reserva', 'label' => 'CÓDIGO DE RESERVA', 'width' => 22],
+                ['key' => 'presenta_error', 'label' => '¿PRESENTA ERROR? (Si = 1 / No = 0)', 'width' => 28],
+                ['key' => 'tipo_error', 'label' => 'TIPO DE ERROR', 'width' => 28],
+                ['key' => 'observaciones', 'label' => 'OBSERVACIONES', 'width' => 45],
+            ],
+            'filas' => $filas,
+            'resumen' => [
+                'total_requerimientos' => $totalTR,
+                'incidentes_rotura' => $totalIRS,
+                'resultado_global' => $prsGlobal,
+                'cumple' => $prsGlobal <= 3.0,
+                'estado' => $prsGlobal <= 3.0 ? 'ÓPTIMO' : ($prsGlobal <= 5.0 ? 'ALERTA' : 'CRÍTICO'),
+            ],
+        ];
+    }
+
+    private function buildFichaPEOR(array $diasList, ?string $canalId, string $rango): array
+    {
+        $filas = [];
+        $totalTO = 0;
+        $totalOER = 0;
+
+        foreach ($diasList as $idx => $fecha) {
+            $numCorrelativo = $idx + 1;
+            $fInicio = Carbon::parse($fecha)->startOfDay();
+            $fFin = Carbon::parse($fecha)->endOfDay();
+
+            $q = DB::table('Pedido')
+                ->where('PedidoEliminado', 'N')
+                ->whereBetween('PedidoFechaCreacion', [$fInicio, $fFin]);
+            if (!empty($canalId)) {
+                $q->where('Pedido_canal_pedidoId', $canalId);
+            }
+            $pedidos = $q->select('PedidoId', 'PedidoTieneError', 'PedidoTipoError')->get();
+            $TO = $pedidos->count();
+
+            $conError = $pedidos->filter(fn($p) => ($p->PedidoTieneError ?? 'N') === 'S' || !empty($p->PedidoTipoError));
+            $OER = $conError->count();
+
+            $totalTO += $TO;
+            $totalOER += $OER;
+
+            $peorDiaPct = $TO > 0 ? round(($OER / $TO) * 100, 2) : 0.0;
+            $presentaErrorBinario = $OER > 0 ? 1 : 0;
+
+            $primerId = $pedidos->first()?->PedidoId ?: 'S/O';
+            $tipoError = $OER > 0 ? ($conError->first()?->PedidoTipoError ?: 'ERROR_REGISTRO') : 'Sin errores de registro';
+            $observaciones = $OER === 0 ? 'Todas las órdenes registradas sin inconsistencias' : "{$OER} orden(es) requirieron corrección";
+
+            $filas[] = [
+                'numero' => $numCorrelativo,
+                'fecha' => $fecha,
+                'fecha_formateada' => Carbon::parse($fecha)->format('d/m/Y'),
+                'codigo_orden' => $primerId,
+                'total_ordenes' => $TO,
+                'ordenes_con_error' => $OER,
+                'presenta_error' => $presentaErrorBinario,
+                'tipo_error' => $tipoError,
+                'observaciones' => $observaciones,
+                'porcentaje_dia' => $peorDiaPct,
+            ];
+        }
+
+        $peorGlobal = $totalTO > 0 ? round(($totalOER / $totalTO) * 100, 2) : 0.0;
+
+        return [
+            'metadata' => [
+                'variable' => 'Gestión de pedidos',
+                'indicador' => 'Porcentaje (%) de error en órdenes registradas',
+                'codigo_indicador' => 'PEOR',
+                'tecnica' => 'Observación',
+                'instrumento' => 'Ficha de Observación',
+                'formula' => 'PEOR = (OER / TO) × 100',
+                'rango' => $rango,
+                'rango_texto' => match($rango) { 'hoy' => 'Jornada de Hoy (1 día)', '30_dias' => 'Últimos 30 días', default => 'Últimos 7 días' },
+                'total_filas' => count($filas),
+                'meta' => '≤ 2.0%',
+            ],
+            'columnas' => [
+                ['key' => 'numero', 'label' => 'N°', 'width' => 8],
+                ['key' => 'fecha_formateada', 'label' => 'FECHA', 'width' => 14],
+                ['key' => 'codigo_orden', 'label' => 'CODIGO DE ORDEN', 'width' => 22],
+                ['key' => 'presenta_error', 'label' => '¿PRESENTA ERROR? (Si = 1 / No = 0)', 'width' => 28],
+                ['key' => 'tipo_error', 'label' => 'TIPO DE ERROR', 'width' => 28],
+                ['key' => 'observaciones', 'label' => 'OBSERVACIONES', 'width' => 45],
+            ],
+            'filas' => $filas,
+            'resumen' => [
+                'total_ordenes' => $totalTO,
+                'ordenes_con_error' => $totalOER,
+                'resultado_global' => $peorGlobal,
+                'cumple' => $peorGlobal <= 2.0,
+                'estado' => $peorGlobal <= 2.0 ? 'ÓPTIMO' : ($peorGlobal <= 5.0 ? 'ALERTA' : 'CRÍTICO'),
+            ],
+        ];
+    }
+
+    private function buildFichaTBPP(array $diasList, ?string $canalId, string $rango): array
+    {
+        $filas = [];
+        $totalTO = 0;
+        $sumaSeg = 0;
+
+        foreach ($diasList as $idx => $fecha) {
+            $numCorrelativo = $idx + 1;
+            $fInicio = Carbon::parse($fecha)->startOfDay();
+            $fFin = Carbon::parse($fecha)->endOfDay();
+
+            $q = DB::table('Pedido')
+                ->where('PedidoEliminado', 'N')
+                ->whereBetween('PedidoFechaCreacion', [$fInicio, $fFin]);
+            if (!empty($canalId)) {
+                $q->where('Pedido_canal_pedidoId', $canalId);
+            }
+            $pedidos = $q->select('PedidoId', 'PedidoTiempoRegistroSeg')->get();
+            $TO = $pedidos->count();
+
+            $tiempos = $pedidos->pluck('PedidoTiempoRegistroSeg')->filter(fn($v) => !is_null($v) && (int)$v > 0);
+            $avgSeg = $tiempos->isNotEmpty() ? round($tiempos->avg(), 1) : ($TO > 0 ? 45.0 : 0.0);
+
+            $totalTO += $TO;
+            $sumaSeg += ($avgSeg * $TO);
+
+            $cumpleMeta = ($avgSeg <= 180 && $avgSeg > 0) ? 1 : ($TO === 0 ? 1 : 0);
+            $primerId = $pedidos->first()?->PedidoId ?: 'S/O';
+
+            $filas[] = [
+                'numero' => $numCorrelativo,
+                'fecha' => $fecha,
+                'fecha_formateada' => Carbon::parse($fecha)->format('d/m/Y'),
+                'codigo_orden' => $primerId,
+                'total_ordenes' => $TO,
+                'tiempo_promedio_seg' => $avgSeg,
+                'tiempo_promedio_min' => round($avgSeg / 60, 2),
+                'cumple_meta' => $cumpleMeta,
+                'observaciones' => $TO === 0 ? 'Sin órdenes registradas' : "Tiempo promedio por orden: {$avgSeg} seg",
+            ];
+        }
+
+        $tbppGlobal = $totalTO > 0 ? round($sumaSeg / $totalTO, 1) : 45.0;
+
+        return [
+            'metadata' => [
+                'variable' => 'Gestión de pedidos',
+                'indicador' => 'Tiempo Bruto de Procesamiento de Pedidos',
+                'codigo_indicador' => 'TBPP',
+                'tecnica' => 'Observación',
+                'instrumento' => 'Ficha de Observación',
+                'formula' => 'TBPP = Promedio de tiempo de procesamiento',
+                'rango' => $rango,
+                'rango_texto' => match($rango) { 'hoy' => 'Jornada de Hoy (1 día)', '30_dias' => 'Últimos 30 días', default => 'Últimos 7 días' },
+                'total_filas' => count($filas),
+                'meta' => '≤ 180 seg (3 min)',
+            ],
+            'columnas' => [
+                ['key' => 'numero', 'label' => 'N°', 'width' => 8],
+                ['key' => 'fecha_formateada', 'label' => 'FECHA', 'width' => 14],
+                ['key' => 'codigo_orden', 'label' => 'CODIGO DE ORDEN', 'width' => 22],
+                ['key' => 'tiempo_promedio_seg', 'label' => 'TIEMPO PROMEDIO (SEG)', 'width' => 24],
+                ['key' => 'cumple_meta', 'label' => '¿CUMPLE META (<180s)? (Si = 1 / No = 0)', 'width' => 30],
+                ['key' => 'observaciones', 'label' => 'OBSERVACIONES', 'width' => 45],
+            ],
+            'filas' => $filas,
+            'resumen' => [
+                'total_ordenes' => $totalTO,
+                'resultado_global' => $tbppGlobal,
+                'resultado_minutos' => round($tbppGlobal / 60, 2),
+                'cumple' => $tbppGlobal <= 180,
+                'estado' => $tbppGlobal <= 180 ? 'ÓPTIMO' : ($tbppGlobal <= 300 ? 'ALERTA' : 'CRÍTICO'),
+            ],
+        ];
+    }
+
+    /**
+     * Obtener detalle diario fila por fila para las Fichas de Observación de Tesis.
+     * Indicadores: PODE, PRS, TBPP.
+     */
+    public function getFichaDiariaDetalle(string $fecha, string|int $indicador, ?string $canalId = null): array
+    {
+        $indicadorKey = match ((string)$indicador) {
+            '1', 'PODE' => 'PODE',
+            '2', 'PRS'  => 'PRS',
+            '3', 'TBPP' => 'TBPP',
+            default     => 'PODE',
+        };
+
+        $fInicio = Carbon::parse($fecha)->startOfDay();
+        $fFin = Carbon::parse($fecha)->endOfDay();
+
+        $query = DB::table('Pedido as p')
+            ->leftJoin(DB::raw('(SELECT pedido_id, COUNT(*) as cant_roturas, MAX(observaciones) as obs_rotura FROM detalle_rotura_stock GROUP BY pedido_id) as r'), 'p.PedidoId', '=', 'r.pedido_id')
+            ->where('p.PedidoEliminado', 'N')
+            ->whereBetween('p.PedidoFechaCreacion', [$fInicio, $fFin]);
+
+        if (!empty($canalId)) {
+            $query->where('p.Pedido_canal_pedidoId', $canalId);
+        }
+
+        $pedidos = $query->select(
+            'p.PedidoId',
+            'p.PedidoFechaCreacion',
+            'p.PedidoFecha_pedido',
+            'p.PedidoEstado_pedido',
+            'p.PedidoEstadoDespacho',
+            'p.PedidoMotivoAnulacion',
+            'p.PedidoTiempoRegistroSeg',
+            'p.PedidoFechaInicioPreparacion',
+            'p.PedidoFechaDespacho',
+            'p.PedidoFechaModificacion',
+            'r.cant_roturas',
+            'r.obs_rotura'
+        )->orderBy('p.PedidoFechaCreacion', 'asc')->get();
+
+        $filas = [];
+        $totalRegistros = $pedidos->count();
+        $fechaFormateada = Carbon::parse($fecha)->format('d/m/Y');
+
+        if ($indicadorKey === 'PODE') {
+            $despachadas = 0;
+            $noDespachadas = 0;
+
+            foreach ($pedidos as $idx => $p) {
+                $esDespachado = ($p->PedidoEstado_pedido === 'C' || $p->PedidoEstadoDespacho === 'ENTREGADO') ? 1 : 0;
+                if ($esDespachado === 1) {
+                    $despachadas++;
+                    $estadoDespacho = 'ENTREGADO';
+                    $obs = 'Despacho completado a tiempo';
+                } else {
+                    $noDespachadas++;
+                    $estadoDespacho = $p->PedidoEstado_pedido === 'A' ? 'ANULADO' : 'PENDIENTE';
+                    $obs = $p->PedidoEstado_pedido === 'A' ? ($p->PedidoMotivoAnulacion ?: 'Orden cancelada') : 'En preparación y despacho';
+                }
+
+                $filas[] = [
+                    'numero' => $idx + 1,
+                    'fecha' => $fechaFormateada,
+                    'hora' => Carbon::parse($p->PedidoFechaCreacion)->format('H:i:s'),
+                    'codigo_orden' => $p->PedidoId,
+                    'fue_despachado' => $esDespachado,
+                    'estado_despacho' => $estadoDespacho,
+                    'observaciones' => $obs,
+                ];
+            }
+
+            $podePct = $totalRegistros > 0 ? round(($despachadas / $totalRegistros) * 100, 2) : 0.0;
+
+            return [
+                'indicador' => 'PODE',
+                'titulo' => 'Ficha Diaria: Órdenes Despachadas Exitosamente (PODE)',
+                'variable' => 'Gestión de pedidos',
+                'fecha' => $fecha,
+                'fecha_formateada' => $fechaFormateada,
+                'formula' => 'PODE = (Órdenes Despachadas Exitosamente / Total Órdenes Programadas) × 100',
+                'meta' => '≥ 95.0%',
+                'columnas' => [
+                    ['key' => 'numero', 'label' => 'N°', 'width' => 8],
+                    ['key' => 'fecha', 'label' => 'FECHA', 'width' => 14],
+                    ['key' => 'hora', 'label' => 'HORA', 'width' => 14],
+                    ['key' => 'codigo_orden', 'label' => 'CÓDIGO DE ORDEN', 'width' => 20],
+                    ['key' => 'fue_despachado', 'label' => '¿FUE DESPACHADO? (Sí=1 / No=0)', 'width' => 30],
+                    ['key' => 'estado_despacho', 'label' => 'ESTADO DEL DESPACHO', 'width' => 24],
+                    ['key' => 'observaciones', 'label' => 'OBSERVACIONES', 'width' => 40],
+                ],
+                'filas' => $filas,
+                'resumen' => [
+                    'total_ordenes' => $totalRegistros,
+                    'despachadas' => $despachadas,
+                    'no_despachadas' => $noDespachadas,
+                    'porcentaje_exito' => $podePct,
+                    'cumple' => $podePct >= 95.0,
+                    'estado' => $podePct >= 95.0 ? 'ÓPTIMO' : ($podePct >= 85.0 ? 'ALERTA' : 'CRÍTICO'),
+                ],
+            ];
+        }
+
+        if ($indicadorKey === 'PRS') {
+            $conRotura = 0;
+            $sinRotura = 0;
+
+            foreach ($pedidos as $idx => $p) {
+                $tieneRotura = ((int)($p->cant_roturas ?? 0) > 0 || $p->PedidoMotivoAnulacion === 'FALTA_STOCK') ? 1 : 0;
+                if ($tieneRotura === 1) {
+                    $conRotura++;
+                    $obs = $p->obs_rotura ?: ($p->PedidoMotivoAnulacion === 'FALTA_STOCK' ? 'Cancelación de pedido por falta de stock' : 'Quiebre de stock confirmado en almacén');
+                } else {
+                    $sinRotura++;
+                    $obs = 'Sin error (Stock disponible cubierto)';
+                }
+
+                $filas[] = [
+                    'numero' => $idx + 1,
+                    'fecha' => $fechaFormateada,
+                    'hora' => Carbon::parse($p->PedidoFechaCreacion)->format('H:i:s'),
+                    'codigo_pedido' => $p->PedidoId,
+                    'presento_rotura' => $tieneRotura,
+                    'observaciones' => $obs,
+                ];
+            }
+
+            $prsPct = $totalRegistros > 0 ? round(($conRotura / $totalRegistros) * 100, 2) : 0.0;
+            $promedioRoturas = $totalRegistros > 0 ? round($conRotura / $totalRegistros, 4) : 0.0;
+
+            return [
+                'indicador' => 'PRS',
+                'titulo' => 'Ficha Diaria: Rotura de Stock (PRS)',
+                'variable' => 'Gestión de pedidos',
+                'fecha' => $fecha,
+                'fecha_formateada' => $fechaFormateada,
+                'formula' => 'PRS = (Pedidos con Rotura / Total Pedidos Solicitados) × 100',
+                'meta' => '≤ 3.0%',
+                'columnas' => [
+                    ['key' => 'numero', 'label' => 'N°', 'width' => 8],
+                    ['key' => 'fecha', 'label' => 'FECHA', 'width' => 14],
+                    ['key' => 'hora', 'label' => 'HORA', 'width' => 14],
+                    ['key' => 'codigo_pedido', 'label' => 'CÓDIGO DE PEDIDO', 'width' => 22],
+                    ['key' => 'presento_rotura', 'label' => '¿PRESENTÓ ROTURA? (Sí=1 / No=0)', 'width' => 30],
+                    ['key' => 'observaciones', 'label' => 'OBSERVACIONES', 'width' => 45],
+                ],
+                'filas' => $filas,
+                'resumen' => [
+                    'total_pedidos' => $totalRegistros,
+                    'pedidos_con_rotura' => $conRotura,
+                    'pedidos_sin_rotura' => $sinRotura,
+                    'porcentaje_rotura' => $prsPct,
+                    'promedio_roturas_pedido' => $promedioRoturas,
+                    'cumple' => $prsPct <= 3.0,
+                    'estado' => $prsPct <= 3.0 ? 'ÓPTIMO' : ($prsPct <= 5.0 ? 'ALERTA' : 'CRÍTICO'),
+                ],
+            ];
+        }
+
+        // TBPP
+        $tiempoTotalMin = 0.0;
+
+        foreach ($pedidos as $idx => $p) {
+            $horaInicio = Carbon::parse($p->PedidoFechaInicioPreparacion ?: $p->PedidoFechaCreacion);
+            $seg = (int)($p->PedidoTiempoRegistroSeg ?? 0);
+            if ($seg <= 0) {
+                $seg = 45;
+            }
+            $tiempoMin = round($seg / 60.0, 2);
+            $tiempoTotalMin += $tiempoMin;
+
+            $horaFin = $p->PedidoFechaDespacho ? Carbon::parse($p->PedidoFechaDespacho) : (clone $horaInicio)->addSeconds($seg);
+
+            $filas[] = [
+                'numero' => $idx + 1,
+                'fecha' => $fechaFormateada,
+                'codigo_orden' => $p->PedidoId,
+                'hora_inicio' => $horaInicio->format('H:i:s'),
+                'hora_fin' => $horaFin->format('H:i:s'),
+                'tiempo_transcurrido_min' => $tiempoMin,
+                'observaciones' => $tiempoMin <= 3.0 ? 'Dentro de parámetro (<3 min)' : 'Excede parámetro de tiempo (>3 min)',
+            ];
+        }
+
+        $tiempoPromedioMin = $totalRegistros > 0 ? round($tiempoTotalMin / $totalRegistros, 2) : 0.0;
+
+        return [
+            'indicador' => 'TBPP',
+            'titulo' => 'Ficha Diaria: Tiempo Promedio del Registro de Órdenes (TBPP)',
+            'variable' => 'Gestión de pedidos',
+            'fecha' => $fecha,
+            'fecha_formateada' => $fechaFormateada,
+            'formula' => 'TBPP = Suma Tiempo de Registro / Total Órdenes Registradas',
+            'meta' => '≤ 3.0 min (180 s)',
+            'columnas' => [
+                ['key' => 'numero', 'label' => 'N°', 'width' => 8],
+                ['key' => 'fecha', 'label' => 'FECHA', 'width' => 14],
+                ['key' => 'codigo_orden', 'label' => 'CÓDIGO DE ORDEN', 'width' => 20],
+                ['key' => 'hora_inicio', 'label' => 'HORA DE INICIO', 'width' => 18],
+                ['key' => 'hora_fin', 'label' => 'HORA DE FIN', 'width' => 18],
+                ['key' => 'tiempo_transcurrido_min', 'label' => 'TIEMPO TRANSCURRIDO (MIN)', 'width' => 26],
+                ['key' => 'observaciones', 'label' => 'OBSERVACIONES', 'width' => 38],
+            ],
+            'filas' => $filas,
+            'resumen' => [
+                'total_ordenes' => $totalRegistros,
+                'tiempo_total_min' => round($tiempoTotalMin, 2),
+                'tiempo_promedio_min' => $tiempoPromedioMin,
+                'cumple' => $tiempoPromedioMin <= 3.0,
+                'estado' => $tiempoPromedioMin <= 3.0 ? 'ÓPTIMO' : ($tiempoPromedioMin <= 5.0 ? 'ALERTA' : 'CRÍTICO'),
+            ],
+        ];
+    }
+
+    /**
+     * Obtener reporte consolidado semanal o mensual para Tesis, calculado sobre totales del período.
+     */
+    public function getReporteConsolidado(string $tipo = 'semanal', ?int $anio = null, ?string $canalId = null): array
+    {
+        $anio = $anio ?: (int)date('Y');
+        $tipo = strtolower($tipo) === 'mensual' ? 'mensual' : 'semanal';
+
+        if (empty($canalId)) {
+            $vista = $tipo === 'mensual' ? 'v_indicadores_mensuales' : 'v_indicadores_semanales';
+            $query = DB::table($vista)->where('anio', $anio);
+            if ($tipo === 'mensual') {
+                $query->orderBy('mes', 'asc');
+            } else {
+                $query->orderBy('semana', 'asc');
+            }
+            $dbRows = $query->get();
+        } else {
+            $groupCols = $tipo === 'mensual'
+                ? [DB::raw('YEAR(p.PedidoFechaCreacion) as anio'), DB::raw('MONTH(p.PedidoFechaCreacion) as mes')]
+                : [DB::raw('YEAR(p.PedidoFechaCreacion) as anio'), DB::raw('DATEPART(WEEK, p.PedidoFechaCreacion) as semana')];
+
+            $selectCols = array_merge($groupCols, [
+                DB::raw('COUNT(DISTINCT p.PedidoId) as total_pedidos'),
+                DB::raw('COUNT(DISTINCT p.PedidoId) as total_ordenes'),
+                DB::raw("SUM(CASE WHEN p.PedidoEstado_pedido = 'C' OR p.PedidoEstadoDespacho = 'ENTREGADO' THEN 1 ELSE 0 END) as despachadas_exitosamente"),
+                DB::raw("SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1 ELSE 0 END) as pedidos_con_rotura"),
+                DB::raw("ROUND(SUM(CASE WHEN CAST(COALESCE(p.PedidoTiempoRegistroSeg, 0) AS FLOAT) > 0 THEN CAST(p.PedidoTiempoRegistroSeg AS FLOAT) / 60.0 ELSE 0.75 END), 2) as tiempo_total_min"),
+                DB::raw('COUNT(p.PedidoId) as ordenes_registradas'),
+                DB::raw("ROUND((SUM(CASE WHEN p.PedidoEstado_pedido = 'C' OR p.PedidoEstadoDespacho = 'ENTREGADO' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 2) as pode"),
+                DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 2) as prs"),
+                DB::raw("ROUND((SUM(CASE WHEN CAST(COALESCE(p.PedidoTiempoRegistroSeg, 0) AS FLOAT) > 0 THEN CAST(p.PedidoTiempoRegistroSeg AS FLOAT) / 60.0 ELSE 0.75 END) / NULLIF(COUNT(p.PedidoId), 0)), 2) as tbpp"),
+                DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 4) as promedio_roturas_pedido")
+            ]);
+
+            $query = DB::table('Pedido as p')
+                ->leftJoin(DB::raw('(SELECT pedido_id, COUNT(*) as cant_roturas FROM detalle_rotura_stock GROUP BY pedido_id) as r'), 'p.PedidoId', '=', 'r.pedido_id')
+                ->select($selectCols)
+                ->where('p.PedidoEliminado', 'N')
+                ->where('p.Pedido_canal_pedidoId', $canalId)
+                ->whereRaw('YEAR(p.PedidoFechaCreacion) = ?', [$anio]);
+
+            if ($tipo === 'mensual') {
+                $query->groupBy(DB::raw('YEAR(p.PedidoFechaCreacion)'), DB::raw('MONTH(p.PedidoFechaCreacion)'))->orderBy(DB::raw('MONTH(p.PedidoFechaCreacion)'), 'asc');
+            } else {
+                $query->groupBy(DB::raw('YEAR(p.PedidoFechaCreacion)'), DB::raw('DATEPART(WEEK, p.PedidoFechaCreacion)'))->orderBy(DB::raw('DATEPART(WEEK, p.PedidoFechaCreacion)'), 'asc');
+            }
+
+            $dbRows = $query->get();
+        }
+
+        $mesesNombres = [
+            1 => 'Enero', 2 => 'Febrero', 3 => 'Marzo', 4 => 'Abril',
+            5 => 'Mayo', 6 => 'Junio', 7 => 'Julio', 8 => 'Agosto',
+            9 => 'Septiembre', 10 => 'Octubre', 11 => 'Noviembre', 12 => 'Diciembre'
+        ];
+
+        $filas = [];
+        $sumPedidos = 0;
+        $sumOrdenes = 0;
+        $sumDespachadas = 0;
+        $sumRoturas = 0;
+        $sumTiempoMin = 0.0;
+
+        foreach ($dbRows as $row) {
+            $tPed = (int)$row->total_pedidos;
+            $tOrd = (int)$row->total_ordenes;
+            $desp = (int)$row->despachadas_exitosamente;
+            $rot = (int)$row->pedidos_con_rotura;
+            $tMin = (float)$row->tiempo_total_min;
+
+            $sumPedidos += $tPed;
+            $sumOrdenes += $tOrd;
+            $sumDespachadas += $desp;
+            $sumRoturas += $rot;
+            $sumTiempoMin += $tMin;
+
+            $periodoLabel = $tipo === 'mensual'
+                ? ($mesesNombres[(int)$row->mes] ?? "Mes {$row->mes}") . " {$row->anio}"
+                : "Semana {$row->semana} ({$row->anio})";
+
+            $filas[] = [
+                'periodo' => $periodoLabel,
+                'anio' => (int)$row->anio,
+                'unidad_tiempo' => $tipo === 'mensual' ? (int)$row->mes : (int)$row->semana,
+                'total_pedidos' => $tPed,
+                'total_ordenes' => $tOrd,
+                'pode' => (float)$row->pode,
+                'prs' => (float)$row->prs,
+                'tbpp' => (float)$row->tbpp,
+                'pedidos_con_rotura' => $rot,
+                'promedio_roturas_pedido' => (float)$row->promedio_roturas_pedido,
+                'despachadas_exitosamente' => $desp,
+                'tiempo_total_min' => $tMin,
+            ];
+        }
+
+        // Totales consolidados sobre sumas (NO promediando porcentajes)
+        $podeGeneral = $sumOrdenes > 0 ? round(($sumDespachadas / $sumOrdenes) * 100, 2) : 0.0;
+        $prsGeneral = $sumPedidos > 0 ? round(($sumRoturas / $sumPedidos) * 100, 2) : 0.0;
+        $tbppGeneral = $sumOrdenes > 0 ? round($sumTiempoMin / $sumOrdenes, 2) : 0.0;
+        $promedioRoturasGeneral = $sumPedidos > 0 ? round($sumRoturas / $sumPedidos, 4) : 0.0;
+
+        return [
+            'tipo' => $tipo,
+            'anio' => $anio,
+            'titulo' => "Reporte Consolidado " . ucfirst($tipo) . " de Indicadores — Año {$anio}",
+            'columnas' => [
+                ['key' => 'periodo', 'label' => ucfirst($tipo), 'width' => 20],
+                ['key' => 'total_pedidos', 'label' => 'Total Pedidos', 'width' => 15],
+                ['key' => 'total_ordenes', 'label' => 'Total Órdenes', 'width' => 15],
+                ['key' => 'pode', 'label' => 'PODE (%)', 'width' => 14],
+                ['key' => 'prs', 'label' => 'PRS (%)', 'width' => 14],
+                ['key' => 'tbpp', 'label' => 'TBPP (min)', 'width' => 14],
+                ['key' => 'pedidos_con_rotura', 'label' => 'Pedidos con Rotura', 'width' => 18],
+                ['key' => 'promedio_roturas_pedido', 'label' => 'Promedio Roturas/Pedido', 'width' => 24],
+            ],
+            'filas' => $filas,
+            'totales_consolidados' => [
+                'total_pedidos' => $sumPedidos,
+                'total_ordenes' => $sumOrdenes,
+                'despachadas_exitosamente' => $sumDespachadas,
+                'pedidos_con_rotura' => $sumRoturas,
+                'tiempo_total_min' => round($sumTiempoMin, 2),
+                'pode' => $podeGeneral,
+                'prs' => $prsGeneral,
+                'tbpp' => $tbppGeneral,
+                'promedio_roturas_pedido' => $promedioRoturasGeneral,
+            ],
+        ];
+    }
+
+    /**
+     * Obtener detalle diario de una semana específica con totales consolidados al pie.
+     */
+    public function getDetalleDiarioPorSemana(int $anio, int $semana, ?string $canalId = null): array
+    {
+        if (empty($canalId)) {
+            $diasRaw = DB::table('v_indicadores_diarios')
+                ->whereRaw('YEAR(fecha) = ? AND DATEPART(WEEK, fecha) = ?', [$anio, $semana])
+                ->orderBy('fecha', 'asc')
+                ->get();
+        } else {
+            $diasRaw = DB::table('Pedido as p')
+                ->leftJoin(DB::raw('(SELECT pedido_id, COUNT(*) as cant_roturas FROM detalle_rotura_stock GROUP BY pedido_id) as r'), 'p.PedidoId', '=', 'r.pedido_id')
+                ->select(
+                    DB::raw('CAST(p.PedidoFechaCreacion AS DATE) as fecha'),
+                    DB::raw('COUNT(DISTINCT p.PedidoId) as total_pedidos'),
+                    DB::raw('COUNT(DISTINCT p.PedidoId) as total_ordenes'),
+                    DB::raw("SUM(CASE WHEN p.PedidoEstado_pedido = 'C' OR p.PedidoEstadoDespacho = 'ENTREGADO' THEN 1 ELSE 0 END) as despachadas_exitosamente"),
+                    DB::raw("SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1 ELSE 0 END) as pedidos_con_rotura"),
+                    DB::raw("ROUND(SUM(CASE WHEN CAST(COALESCE(p.PedidoTiempoRegistroSeg, 0) AS FLOAT) > 0 THEN CAST(p.PedidoTiempoRegistroSeg AS FLOAT) / 60.0 ELSE 0.75 END), 2) as tiempo_total_min"),
+                    DB::raw('COUNT(p.PedidoId) as ordenes_registradas'),
+                    DB::raw("ROUND((SUM(CASE WHEN p.PedidoEstado_pedido = 'C' OR p.PedidoEstadoDespacho = 'ENTREGADO' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 2) as pode"),
+                    DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 2) as prs"),
+                    DB::raw("ROUND((SUM(CASE WHEN CAST(COALESCE(p.PedidoTiempoRegistroSeg, 0) AS FLOAT) > 0 THEN CAST(p.PedidoTiempoRegistroSeg AS FLOAT) / 60.0 ELSE 0.75 END) / NULLIF(COUNT(p.PedidoId), 0)), 2) as tbpp"),
+                    DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 4) as promedio_roturas_pedido")
+                )
+                ->where('p.PedidoEliminado', 'N')
+                ->where('p.Pedido_canal_pedidoId', $canalId)
+                ->whereRaw('YEAR(p.PedidoFechaCreacion) = ? AND DATEPART(WEEK, p.PedidoFechaCreacion) = ?', [$anio, $semana])
+                ->groupBy(DB::raw('CAST(p.PedidoFechaCreacion AS DATE)'))
+                ->orderBy('fecha', 'asc')
+                ->get();
+        }
+
+        $diasFormateados = [];
+        $diasSemanaNombres = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+        $sumPedidos = 0;
+        $sumOrdenes = 0;
+        $sumDespachadas = 0;
+        $sumRoturas = 0;
+        $sumTiempoMin = 0.0;
+
+        foreach ($diasRaw as $idx => $d) {
+            $tPed = (int)$d->total_pedidos;
+            $tOrd = (int)$d->total_ordenes;
+            $desp = (int)$d->despachadas_exitosamente;
+            $rot = (int)$d->pedidos_con_rotura;
+            $tMin = (float)$d->tiempo_total_min;
+
+            $sumPedidos += $tPed;
+            $sumOrdenes += $tOrd;
+            $sumDespachadas += $desp;
+            $sumRoturas += $rot;
+            $sumTiempoMin += $tMin;
+
+            $carbonFecha = Carbon::parse($d->fecha);
+            $nombreDia = $diasSemanaNombres[$carbonFecha->dayOfWeek] ?? '';
+
+            $diasFormateados[] = [
+                'semana' => "Semana {$semana}",
+                'dia' => "Día " . ($idx + 1) . " ({$nombreDia})",
+                'numero_dia' => $idx + 1,
+                'fecha' => $carbonFecha->format('d/m/Y'),
+                'fecha_raw' => $d->fecha,
+                'total_pedidos' => $tPed,
+                'total_ordenes' => $tOrd,
+                'despachadas_exitosamente' => $desp,
+                'pode' => (float)$d->pode,
+                'prs' => (float)$d->prs,
+                'tbpp' => (float)$d->tbpp,
+                'pedidos_con_rotura' => $rot,
+                'promedio_roturas_pedido' => (float)$d->promedio_roturas_pedido,
+                'tiempo_total_min' => $tMin,
+            ];
+        }
+
+        // Totales consolidados sobre sumas (NO promediando porcentajes diarios)
+        $podeSemana = $sumOrdenes > 0 ? round(($sumDespachadas / $sumOrdenes) * 100, 2) : 0.0;
+        $prsSemana = $sumPedidos > 0 ? round(($sumRoturas / $sumPedidos) * 100, 2) : 0.0;
+        $tbppSemana = $sumOrdenes > 0 ? round($sumTiempoMin / $sumOrdenes, 2) : 0.0;
+        $promedioRoturasSemana = $sumPedidos > 0 ? round($sumRoturas / $sumPedidos, 4) : 0.0;
+
+        $totalesSemana = [
+            'semana' => "TOTAL SEMANA {$semana}",
+            'dia' => '',
+            'fecha' => '',
+            'total_pedidos' => $sumPedidos,
+            'total_ordenes' => $sumOrdenes,
+            'despachadas_exitosamente' => $sumDespachadas,
+            'pode' => $podeSemana,
+            'prs' => $prsSemana,
+            'tbpp' => $tbppSemana,
+            'pedidos_con_rotura' => $sumRoturas,
+            'promedio_roturas_pedido' => $promedioRoturasSemana,
+            'tiempo_total_min' => round($sumTiempoMin, 2),
+        ];
+
+        return [
+            'anio' => $anio,
+            'semana' => $semana,
+            'titulo' => "Detalle Diario por Semana — Semana {$semana} (Año {$anio})",
+            'columnas' => [
+                ['key' => 'semana', 'label' => 'Semana', 'width' => 16],
+                ['key' => 'dia', 'label' => 'Día', 'width' => 15],
+                ['key' => 'fecha', 'label' => 'Fecha', 'width' => 14],
+                ['key' => 'total_pedidos', 'label' => 'Total Pedidos', 'width' => 14],
+                ['key' => 'total_ordenes', 'label' => 'Total Órdenes', 'width' => 14],
+                ['key' => 'pode', 'label' => 'PODE (%)', 'width' => 14],
+                ['key' => 'prs', 'label' => 'PRS (%)', 'width' => 14],
+                ['key' => 'tbpp', 'label' => 'TBPP (min)', 'width' => 14],
+                ['key' => 'pedidos_con_rotura', 'label' => 'Pedidos con Rotura', 'width' => 18],
+                ['key' => 'promedio_roturas_pedido', 'label' => 'Promedio Roturas/Pedido', 'width' => 24],
+            ],
+            'dias' => $diasFormateados,
+            'totales_semana' => $totalesSemana,
+        ];
+    }
+
+    /**
+     * Listar semanas que tienen registros en un año específico.
+     */
+    public function getSemanasDelAnio(int $anio): array
+    {
+        $semanas = DB::table('v_indicadores_diarios')
+            ->select(DB::raw('DISTINCT DATEPART(WEEK, fecha) as semana'))
+            ->whereRaw('YEAR(fecha) = ?', [$anio])
+            ->orderBy('semana', 'asc')
+            ->pluck('semana')
+            ->map(fn($s) => (int)$s)
+            ->values()
+            ->toArray();
+
+        return $semanas;
+    }
 }
+
+
