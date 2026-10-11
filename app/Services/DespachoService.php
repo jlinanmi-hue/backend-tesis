@@ -332,6 +332,15 @@ class DespachoService
                 if (!$itemOriginal) continue;
 
                 $cantSolicitada = (float) $itemOriginal->cantidad_solicitada;
+
+                // Validación estricta: No se puede despachar más de lo solicitado en el pedido
+                if ($cantDespachada > $cantSolicitada) {
+                    throw new Exception("La cantidad a despachar ({$cantDespachada}) no puede ser mayor a la cantidad solicitada ({$cantSolicitada}) para el producto '{$itemOriginal->producto_id}'.");
+                }
+                if ($cantDespachada < 0) {
+                    throw new Exception("La cantidad a despachar no puede ser negativa.");
+                }
+
                 $cantFaltante   = max(0.0, $cantSolicitada - $cantDespachada);
                 $tieneFaltante  = $cantFaltante > 0;
                 $factor         = (float) ($itemOriginal->factor_conversion ?: 1.0);
