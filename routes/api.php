@@ -8,6 +8,7 @@ use App\Http\Controllers\CategoriaProductoController;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DeliveryController;
+use App\Http\Controllers\DespachoController;
 use App\Http\Controllers\EmpresaController;
 use App\Http\Controllers\MovimientoController;
 use App\Http\Controllers\NotificacionController;
@@ -386,4 +387,17 @@ Route::prefix('ai/predicciones-compra')->group(function () {
     Route::get('/pdf/producto/{prodId}',   [PurchasePredictionController::class, 'pdfProducto']);
     Route::get('/csv',                     [PurchasePredictionController::class, 'csv']);
 });
+
+// 24. Módulo de Despacho y Verificación de Pedidos (rol: logistica, admin)
+// ⚠️ Sin tablas nuevas. Sin relaciones Eloquent. Solo JOINs sobre esquema existente.
+Route::prefix('despacho')->group(function () {
+    Route::get('/pedidos',                              [DespachoController::class, 'index']);
+    Route::get('/pedidos/{id}',                         [DespachoController::class, 'show']);
+    Route::post('/pedidos/{id}/iniciar',                [DespachoController::class, 'iniciar']);
+    Route::post('/pedidos/{id}/cancelar-preparacion',   [DespachoController::class, 'cancelarPreparacion']);
+    Route::post('/pedidos/{id}/completar',              [DespachoController::class, 'completar']);
+    Route::post('/pedidos/{id}/faltante',               [DespachoController::class, 'faltante']);
+    Route::post('/pedidos/{id}/rechazar',               [DespachoController::class, 'rechazar']);
+});
+
 
