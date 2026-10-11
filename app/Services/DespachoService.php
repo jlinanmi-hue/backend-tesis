@@ -47,7 +47,15 @@ class DespachoService
             ->select(
                 'p.PedidoId',
                 'p.PedidoEstado_pedido as PedidoEstado',
-                'p.PedidoEstadoDespacho',
+                DB::raw("
+                    COALESCE(p.PedidoEstadoDespacho,
+                        CASE 
+                            WHEN p.PedidoEstado_pedido = 'C' THEN 'ENTREGADO_COMPLETO'
+                            WHEN p.PedidoEstado_pedido = 'A' THEN 'RECHAZADO'
+                            ELSE 'PENDIENTE_DESPACHO'
+                        END
+                    ) as PedidoEstadoDespacho
+                "),
                 'p.PedidoTieneFaltante',
                 'p.PedidoTotal',
                 'p.PedidoTotalDespachado',
@@ -68,7 +76,13 @@ class DespachoService
         // Filtro por estado_despacho
         if (!empty($filtros['estado_despacho'])) {
             if ($filtros['estado_despacho'] === 'PENDIENTE_DESPACHO' || $filtros['estado_despacho'] === 'PENDIENTE') {
-                $query->whereIn('p.PedidoEstadoDespacho', ['PENDIENTE', 'PENDIENTE_DESPACHO']);
+                $query->where(function ($q) {
+                    $q->whereIn('p.PedidoEstadoDespacho', ['PENDIENTE', 'PENDIENTE_DESPACHO'])
+                      ->orWhere(function ($sub) {
+                          $sub->whereNull('p.PedidoEstadoDespacho')
+                              ->where('p.PedidoEstado_pedido', 'P');
+                      });
+                });
             } else {
                 $query->where('p.PedidoEstadoDespacho', $filtros['estado_despacho']);
             }
@@ -519,7 +533,7 @@ class DespachoService
                   ->orWhere('PedidoAcuerdo_Comercial', 'not like', '%Cotizaci%');
             })
             ->selectRaw("
-                COUNT(CASE WHEN PedidoEstadoDespacho IN ('PENDIENTE', 'PENDIENTE_DESPACHO') THEN 1 END) as pendientes,
+                COUNT(CASE WHEN (PedidoEstadoDespacho IN ('PENDIENTE', 'PENDIENTE_DESPACHO') OR (PedidoEstadoDespacho IS NULL AND PedidoEstado_pedido = 'P')) THEN 1 END) as pendientes,
                 COUNT(CASE WHEN PedidoEstadoDespacho = 'EN_PREPARACION' THEN 1 END) as en_preparacion,
                 COUNT(CASE WHEN PedidoEstadoDespacho IN ('ENTREGADO_COMPLETO', 'ENTREGADO_CON_FALTANTE')
                            AND CAST(PedidoFechaFinDespacho AS DATE) = ? THEN 1 END) as despachados_hoy,
