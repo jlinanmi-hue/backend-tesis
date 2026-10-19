@@ -111,7 +111,15 @@ PROMPT;
     protected function getAiService(): GeminiService|OpenAiService
     {
         $provider = config('services.ai.provider', env('AI_PROVIDER', 'openai'));
-        if ($provider === 'openai' && !empty(config('services.openai.api_key'))) {
+        $openAiKey = config('services.openai.api_key');
+        if ($provider === 'openai' && !empty($openAiKey)) {
+            return $this->openAiService;
+        }
+        $geminiKey = config('services.gemini.api_key');
+        if (!empty($geminiKey) && str_starts_with($geminiKey, 'AIzaSy')) {
+            return $this->geminiService;
+        }
+        if (!empty($openAiKey)) {
             return $this->openAiService;
         }
         return $this->geminiService;
