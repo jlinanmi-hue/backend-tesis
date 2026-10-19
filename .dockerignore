@@ -1,0 +1,10 @@
+.git
+.github
+vendor
+node_modules
+.env
+.env.backup
+.env.production
+storage/logs/*
+!storage/logs/.gitignore
+tests
