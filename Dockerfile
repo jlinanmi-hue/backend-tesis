@@ -26,7 +26,10 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --ignore-pl
 # Permisos para storage y cache
 RUN chmod -R 777 storage bootstrap/cache
 
+# Habilitar multi-threading / workers concurrentes en el servidor CLI de PHP
+ENV PHP_CLI_SERVER_WORKERS=8
+
 EXPOSE 10000
 
-# Iniciar el servidor web en el puerto que Render define
+# Iniciar el servidor web con multi-workers en el puerto que Render define
 CMD ["sh", "-c", "php artisan config:clear && php artisan route:clear && php artisan serve --host=0.0.0.0 --port=${PORT:-10000}"]
