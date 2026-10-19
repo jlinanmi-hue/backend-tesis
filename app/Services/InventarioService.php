@@ -24,14 +24,9 @@ class InventarioService
     /**
      * List paginated or filtered products.
      */
-    public function listarProductos(array $filters = [], int $perPage = 15): LengthAwarePaginator|Collection
+    public function listarProductos(array $filters = [], int $perPage = 15): LengthAwarePaginator|\Illuminate\Support\Collection
     {
-        $query = Producto::with([
-            'categoria',
-            'ubicacion',
-            'detalleProductoMedidas.unidadMedida',
-            'proveedores',
-        ]);
+        $query = DB::table('vista_stock_productos');
 
         if (!empty($filters['eliminados']) && ($filters['eliminados'] === 'true' || $filters['eliminados'] === '1' || $filters['eliminados'] === 1 || $filters['eliminados'] === true)) {
             $query->where('ProductoEliminado', 'S');
@@ -44,10 +39,10 @@ class InventarioService
         if (!empty($filters['search'])) {
             $search = $filters['search'];
             $query->where(function ($q) use ($search) {
-                $q->where('ProductoNombre', 'like', "%{$search}%")
-                  ->orWhere('ProductoMarca', 'like', "%{$search}%")
-                  ->orWhere('producto_descripcion', 'like', "%{$search}%")
-                  ->orWhere('ProductoId', 'like', "%{$search}%");
+                $q->where('ProductoNombre', 'ilike', "%{$search}%")
+                  ->orWhere('ProductoMarca', 'ilike', "%{$search}%")
+                  ->orWhere('producto_descripcion', 'ilike', "%{$search}%")
+                  ->orWhere('ProductoId', 'ilike', "%{$search}%");
             });
         }
 
@@ -60,7 +55,7 @@ class InventarioService
         }
 
         if (!empty($filters['marca'])) {
-            $query->where('ProductoMarca', 'like', "%{$filters['marca']}%");
+            $query->where('ProductoMarca', 'ilike', "%{$filters['marca']}%");
         }
 
         if (!empty($filters['estado'])) {
@@ -68,47 +63,28 @@ class InventarioService
         }
 
         if (!empty($filters['stockBajo']) && filter_var($filters['stockBajo'], FILTER_VALIDATE_BOOLEAN)) {
-            $query->whereColumn('ProductoStockActual', '<=', 'ProductoStockMinimo');
+            $query->whereRaw('"ProductoStockActual" <= "ProductoStockMinimo"');
         }
 
         $query->orderBy('ProductoFechaCreacion', 'desc');
 
         $result = $perPage > 0 ? $query->paginate($perPage) : $query->get();
 
-        // Enriquecer con campos calculados en backend
         $enrich = function ($p) {
-            $stock = (float) $p->ProductoStockActual;
-            $minimo = (float) $p->ProductoStockMinimo;
-
-            if ($stock <= 0) {
-                $alertaStock = 'AGOTADO';
-                $alertaColor = 'rose';
-            } elseif ($stock <= $minimo) {
-                $alertaStock = 'STOCK_MINIMO';
-                $alertaColor = 'amber';
-            } else {
-                $alertaStock = 'NORMAL';
-                $alertaColor = 'emerald';
-            }
-
-            $detalleBase = $p->detalleProductoMedidas->firstWhere('Detalle_Producto_medida_factor_conversion', 1)
-                ?? $p->detalleProductoMedidas->first();
-            $unidadBaseAbrev = $detalleBase?->unidadMedida?->unidades_medidaAbreviatura
-                ?: ($detalleBase?->unidadMedida?->unidades_medidaDescripcionUnidades ?: 'UND');
-
-            $p->stock_actual_formateado = number_format($stock, $stock == (int) $stock ? 0 : 2) . ' ' . $unidadBaseAbrev;
-            $p->alerta_stock = $alertaStock;
-            $p->alerta_color = $alertaColor;
-            $p->categoria_nombre = $p->categoria->Categoria_ProductoDescripcion_categoria ?? 'Sin Categoría';
-            $p->ubicacion_descripcion = $p->ubicacion?->producto_ubi_descripcion ?? 'Sin Ubicación';
-            $p->ubicacion_observacion = $p->ubicacion?->producto_ubi_observacion;
-            $p->unidad_base_nombre = $detalleBase?->unidadMedida?->unidades_medidaDescripcionUnidades ?? 'Unidad';
-            $p->unidad_base_abreviatura = $unidadBaseAbrev;
-            $p->precio_compra_base = (float) ($detalleBase?->Detalle_Producto_medida_precio_compra ?? 0);
-            $p->precio_venta_base = (float) ($detalleBase?->Detalle_Producto_medida_precio_venta ?? 0);
+            $stock = (float) ($p->ProductoStockActual ?? 0);
+            $p->precio_compra_base = (float) ($p->precio_compra_base ?? 0);
+            $p->precio_venta_base = (float) ($p->precio_venta_base ?? 0);
+            $p->stock_total_vendible = $stock;
+            $unidadAbrev = $p->unidad_base_abreviatura ?: 'UND';
+            $p->stock_actual_formateado = number_format($stock, $stock == (int) $stock ? 0 : 2) . ' ' . $unidadAbrev;
             $p->precio_compra_base_formateado = 'S/ ' . number_format($p->precio_compra_base, 2);
             $p->precio_venta_base_formateado = 'S/ ' . number_format($p->precio_venta_base, 2);
-            $p->stock_total_vendible = (float) ($p->ProductoStockActual ?? 0);
+
+            if (isset($p->detalle_producto_medidas) && is_string($p->detalle_producto_medidas)) {
+                $p->detalle_producto_medidas = json_decode($p->detalle_producto_medidas, true) ?: [];
+            } elseif (!isset($p->detalle_producto_medidas) || !is_array($p->detalle_producto_medidas)) {
+                $p->detalle_producto_medidas = [];
+            }
 
             return $p;
         };
@@ -612,46 +588,18 @@ class InventarioService
     /**
      * List inventory movements (Kardex) with filters and UI-ready formatting.
      */
-    public function listarMovimientos(array $filters = [], int $perPage = 8): LengthAwarePaginator|Collection
+    public function listarMovimientos(array $filters = [], int $perPage = 8): LengthAwarePaginator|\Illuminate\Support\Collection
     {
-        $query = MovimientoProducto::query()
-            ->select([
-                'Movimiento_productoId',
-                'Movimiento_producto_ProductoId',
-                'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId',
-                'Movimiento_productoTipoMovimiento',
-                'Movimiento_productoSubtipo',
-                'Movimiento_productoCantidadEntrada',
-                'Movimiento_productoCantidadSalida',
-                'Movimiento_productoCantidadSaldo',
-                'Movimiento_productoCantidadPresentacion',
-                'Movimiento_productoCostoPrecioUnitario',
-                'Movimiento_productoDocumentoOperacionId',
-                'Movimiento_productoReferenciaId',
-                'Movimiento_productoReferenciaTipo',
-                'Movimiento_productoMotivo',
-                'Movimiento_productoFecha_Movimiento',
-                'Movimiento_productoFechaCreacion',
-                'Movimiento_productoUsuarioCreacion',
-                'Movimiento_productoEliminado',
-            ])
-            ->with([
-                'producto:ProductoId,ProductoNombre,ProductoMarca,Producto_Categoria_ProductoId',
-                'producto.categoria:Categoria_ProductoId,Categoria_ProductoDescripcion_categoria',
-                'producto.detalleProductoMedidas:Detalle_Producto_medida_ProductoId,Detalle_Producto_medida_unidades_medidaId,Detalle_Producto_medida_factor_conversion,Detalle_Producto_medida_precio_venta',
-                'producto.detalleProductoMedidas.unidadMedida:unidades_medidaId,unidades_medidaDescripcionUnidades,unidades_medidaAbreviatura',
-                'unidadMedida:unidades_medidaId,unidades_medidaDescripcionUnidades,unidades_medidaAbreviatura',
-            ])->where('Movimiento_productoEliminado', 'N');
+        $query = DB::table('vista_kardex_movimientos')
+            ->where('Movimiento_productoEliminado', 'N');
 
         if (!empty($filters['search'])) {
             $search = $filters['search'];
             $query->where(function ($q) use ($search) {
-                $q->where('Movimiento_productoDocumentoOperacionId', 'like', "%{$search}%")
-                  ->orWhere('Movimiento_productoId', 'like', "%{$search}%")
-                  ->orWhereHas('producto', function ($pq) use ($search) {
-                      $pq->where('ProductoNombre', 'like', "%{$search}%")
-                        ->orWhere('ProductoMarca', 'like', "%{$search}%");
-                  });
+                $q->where('Movimiento_productoDocumentoOperacionId', 'ilike', "%{$search}%")
+                  ->orWhere('Movimiento_productoId', 'ilike', "%{$search}%")
+                  ->orWhere('producto_nombre', 'ilike', "%{$search}%")
+                  ->orWhere('producto_marca', 'ilike', "%{$search}%");
             });
         }
 
@@ -685,28 +633,14 @@ class InventarioService
 
         $enrichMovement = function ($m) {
             $esEntrada = strtoupper($m->Movimiento_productoTipoMovimiento) === 'E';
-            $cantPresentacion = (float) $m->Movimiento_productoCantidadPresentacion;
-            $cantEntrada = (float) $m->Movimiento_productoCantidadEntrada;
-            $cantSalida = (float) $m->Movimiento_productoCantidadSalida;
-            $saldo = (float) $m->Movimiento_productoCantidadSaldo;
-            $costoUnitario = (float) $m->Movimiento_productoCostoPrecioUnitario;
+            $cantPresentacion = (float) ($m->Movimiento_productoCantidadPresentacion ?? 0);
+            $cantEntrada = (float) ($m->Movimiento_productoCantidadEntrada ?? 0);
+            $cantSalida = (float) ($m->Movimiento_productoCantidadSalida ?? 0);
+            $saldo = (float) ($m->Movimiento_productoCantidadSaldo ?? 0);
+            $costoUnitario = (float) ($m->Movimiento_productoCostoPrecioUnitario ?? 0);
 
-            // 1. Resolver unidad base del producto
-            $detalleBase = $m->producto?->detalleProductoMedidas?->firstWhere('Detalle_Producto_medida_factor_conversion', 1)
-                ?? $m->producto?->detalleProductoMedidas?->first();
-            $unidadBase = $detalleBase?->unidadMedida;
-            $unidadBaseAbrev = $unidadBase?->unidades_medidaAbreviatura ?: ($unidadBase?->unidades_medidaDescripcionUnidades ?: 'UND');
-            $unidadBaseDesc = $unidadBase?->unidades_medidaDescripcionUnidades ?: 'Unidad';
-
-            // 2. Resolver unidad asignada a la presentación del movimiento
-            $movUnidad = $m->unidadMedida;
-            $tieneUnidadEnProducto = $m->producto?->detalleProductoMedidas?->contains('Detalle_Producto_medida_unidades_medidaId', $m->Movimiento_producto_Detalle_Producto_medida_unidades_medidaId);
-            if (!$tieneUnidadEnProducto && $unidadBase) {
-                $movUnidad = $unidadBase;
-            }
-
-            $unidadMovAbrev = $movUnidad?->unidades_medidaAbreviatura ?: ($movUnidad?->unidades_medidaDescripcionUnidades ?: $unidadBaseAbrev);
-            $unidadMovDesc = $movUnidad?->unidades_medidaDescripcionUnidades ?: $unidadBaseDesc;
+            $unidadMovAbrev = $m->unidad_movimiento_abreviatura ?: 'UND';
+            $unidadBaseAbrev = $m->unidad_base_abreviatura ?: 'UND';
 
             $cantPresFormateada = ($cantPresentacion == (int) $cantPresentacion)
                 ? number_format($cantPresentacion, 0)
@@ -724,70 +658,25 @@ class InventarioService
                 ? number_format($saldo, 0)
                 : rtrim(rtrim(number_format($saldo, 2), '0'), '.');
 
-            $doc = $m->Movimiento_productoDocumentoOperacionId ?? '';
-            $subtipo = $m->Movimiento_productoSubtipo ?? '';
-            $tipoOperacion = 'Movimiento de Inventario';
-
-            if ($subtipo === 'RECEPCION_OC') {
-                $tipoOperacion = 'Recepción de Orden de Compra';
-            } elseif ($subtipo === 'ANULACION_RECEPCION') {
-                $tipoOperacion = 'Contra-Movimiento (Anulación OC)';
-            } elseif ($subtipo === 'COMPRA_RAPIDA') {
-                $tipoOperacion = 'Compra Rápida a PYME Vecina';
-            } elseif ($subtipo === 'AJUSTE_MANUAL') {
-                $tipoOperacion = 'Ajuste Manual de Kárdex';
-            } elseif ($subtipo === 'DEVOLUCION_CLIENTE') {
-                $tipoOperacion = 'Devolución de Pedido Cliente';
-            } elseif ($subtipo === 'INVENTARIO_INICIAL') {
-                $tipoOperacion = 'Inventario Inicial';
-            } elseif (str_starts_with($doc, 'AJU-')) {
-                $tipoOperacion = 'Ajuste / Merma de Inventario';
-            } elseif (str_starts_with($doc, 'REV-')) {
-                $tipoOperacion = 'Reversión de Ajuste';
-            } elseif (str_starts_with($doc, 'INV-')) {
-                $tipoOperacion = 'Inventario Inicial';
-            } elseif (str_starts_with($doc, 'PED-')) {
-                $tipoOperacion = 'Salida por Pedido de Venta';
-            } elseif (str_starts_with($doc, 'F') || str_starts_with($doc, 'B') || str_starts_with($doc, 'DOC-')) {
-                $tipoOperacion = $esEntrada ? 'Recepción / Compra' : 'Salida de Mercadería';
+            $doc = $m->Movimiento_productoDocumentoOperacionId ?: 'S/N';
+            $fechaMov = $m->Movimiento_productoFecha_Movimiento;
+            if ($fechaMov && \Carbon\Carbon::parse($fechaMov)->format('H:i:s') === '00:00:00' && !empty($m->Movimiento_productoFechaCreacion)) {
+                $fechaMov = $m->Movimiento_productoFechaCreacion;
             }
 
-            $m->subtipo = $subtipo;
+            $m->subtipo = $m->Movimiento_productoSubtipo ?? '';
             $m->referencia_tipo = $m->Movimiento_productoReferenciaTipo;
             $m->referencia_id = $m->Movimiento_productoReferenciaId;
             $m->motivo = $m->Movimiento_productoMotivo;
-
             $m->producto_id = $m->Movimiento_producto_ProductoId;
-            $m->producto_nombre = $m->producto->ProductoNombre ?? 'Producto no disponible';
-            $m->producto_marca = $m->producto->ProductoMarca ?? '';
-            $m->categoria_nombre = $m->producto->categoria->Categoria_ProductoDescripcion_categoria ?? 'Sin Categoría';
-            $m->unidad_base_nombre = $unidadBaseDesc;
-            $m->unidad_base_abreviatura = $unidadBaseAbrev;
-            $m->unidad_movimiento_nombre = $unidadMovDesc;
-            $m->unidad_movimiento_abreviatura = $unidadMovAbrev;
-            $m->tipo_operacion_texto = $tipoOperacion;
-            $m->tipo_movimiento_badge = $esEntrada ? 'ENTRADA' : 'SALIDA';
-            $m->tipo_movimiento_color = $esEntrada ? 'emerald' : 'rose';
             $m->cantidad_presentacion_texto = $cantPresFormateada . ' ' . $unidadMovAbrev;
             $m->cantidad_base_texto = $esEntrada
                 ? '+' . $cantEntradaFormateada . ' ' . $unidadBaseAbrev
                 : '-' . $cantSalidaFormateada . ' ' . $unidadBaseAbrev;
-            $doc = $doc ?: 'S/N';
-            $fechaMov = $m->Movimiento_productoFecha_Movimiento;
-            if ($fechaMov && \Carbon\Carbon::parse($fechaMov)->format('H:i:s') === '00:00:00' && $m->Movimiento_productoFechaCreacion) {
-                $fechaMov = $m->Movimiento_productoFechaCreacion;
-            }
-
             $m->documento_referencia = $doc;
-            $m->fecha_movimiento_formateada = $fechaMov
-                ? \Carbon\Carbon::parse($fechaMov)->format('Y-m-d H:i')
-                : '—';
-            $m->fecha_solo = $fechaMov
-                ? \Carbon\Carbon::parse($fechaMov)->format('Y-m-d')
-                : '—';
-            $m->hora_solo = $fechaMov
-                ? \Carbon\Carbon::parse($fechaMov)->format('H:i')
-                : '';
+            $m->fecha_movimiento_formateada = $fechaMov ? \Carbon\Carbon::parse($fechaMov)->format('Y-m-d H:i') : '—';
+            $m->fecha_solo = $fechaMov ? \Carbon\Carbon::parse($fechaMov)->format('Y-m-d') : '—';
+            $m->hora_solo = $fechaMov ? \Carbon\Carbon::parse($fechaMov)->format('H:i') : '';
             $m->saldo_resultante_texto = $saldoFormateado . ' ' . $unidadBaseAbrev;
             $m->costo_precio_formateado = 'S/ ' . number_format($costoUnitario, 2);
             $m->costo_total_estimado = round($cantPresentacion * $costoUnitario, 2);

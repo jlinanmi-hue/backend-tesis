@@ -6,6 +6,7 @@ use App\Services\InventarioService;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class ProductoController extends Controller
@@ -500,26 +501,29 @@ class ProductoController extends Controller
     public function productosParaSelect(): JsonResponse
     {
         try {
-            $productos = \App\Models\Producto::where('ProductoEliminado', 'N')
+            $productos = DB::table('vista_stock_productos')
+                ->where('ProductoEliminado', 'N')
                 ->where('ProductoEstado', 'A')
-                ->with(['categoria', 'detalleProductoMedidas' => function ($q) {
-                    $q->where('Detalle_Producto_medidaEliminado', 'N')->with('unidadMedida');
-                }])
                 ->orderBy('ProductoNombre', 'asc')
                 ->get()
                 ->map(function ($p) {
-                    $unidades = $p->detalleProductoMedidas->map(function ($det) {
-                        $costo = (float) $det->Detalle_Producto_medida_precio_compra;
-                        $venta = (float) $det->Detalle_Producto_medida_precio_venta;
+                    $detalles = is_string($p->detalle_producto_medidas)
+                        ? json_decode($p->detalle_producto_medidas, true) ?: []
+                        : (is_array($p->detalle_producto_medidas) ? $p->detalle_producto_medidas : []);
+
+                    $unidades = collect($detalles)->map(function ($det) {
+                        $costo = (float) ($det['Detalle_Producto_medida_precio_compra'] ?? 0);
+                        $venta = (float) ($det['Detalle_Producto_medida_precio_venta'] ?? 0);
                         $margen = $venta > 0 ? round((($venta - $costo) / $venta) * 100, 1) : 0;
-                        $esBase = (int) $det->Detalle_Producto_medida_factor_conversion === 1 || ($det->unidadMedida && (int) $det->unidadMedida->unidades_medidaEsBase === 1);
+                        $factor = (int) ($det['Detalle_Producto_medida_factor_conversion'] ?? 1);
+                        $esBase = $factor === 1;
 
                         return [
-                            'unidades_medidaId' => $det->Detalle_Producto_medida_unidades_medidaId,
-                            'descripcion' => $det->unidadMedida->unidades_medidaDescripcionUnidades ?? 'Unidad',
-                            'abreviatura' => $det->unidadMedida->unidades_medidaAbreviatura ?? 'UND',
+                            'unidades_medidaId' => $det['Detalle_Producto_medida_unidades_medidaId'] ?? '',
+                            'descripcion' => $det['unidad_medida']['unidades_medidaDescripcionUnidades'] ?? 'Unidad',
+                            'abreviatura' => $det['unidad_medida']['unidades_medidaAbreviatura'] ?? 'UND',
                             'es_base' => $esBase,
-                            'factor_conversion' => (int) $det->Detalle_Producto_medida_factor_conversion,
+                            'factor_conversion' => $factor,
                             'precio_compra' => $costo,
                             'precio_venta' => $venta,
                             'precio_compra_formateado' => 'S/ ' . number_format($costo, 2),
@@ -529,14 +533,14 @@ class ProductoController extends Controller
                     })->values();
 
                     $unidadBase = $unidades->first(fn ($u) => !empty($u['es_base']) || $u['factor_conversion'] === 1) ?? $unidades->first();
-                    $abrevBase = $unidadBase['abreviatura'] ?? 'UND';
-                    $nombreBase = $unidadBase['descripcion'] ?? 'Unidad';
+                    $abrevBase = $unidadBase['abreviatura'] ?? $p->unidad_base_abreviatura ?? 'UND';
+                    $nombreBase = $unidadBase['descripcion'] ?? $p->unidad_base_nombre ?? 'Unidad';
 
                     return [
                         'ProductoId' => $p->ProductoId,
                         'ProductoNombre' => $p->ProductoNombre,
                         'ProductoMarca' => $p->ProductoMarca ?? 'Genérico',
-                        'categoria_nombre' => $p->categoria->Categoria_ProductoDescripcion_categoria ?? 'Sin Categoría',
+                        'categoria_nombre' => $p->categoria_nombre ?? 'Sin Categoría',
                         'ProductoStockActual' => (float) $p->ProductoStockActual,
                         'stock_total_vendible' => (float) $p->ProductoStockActual,
                         'unidad_base' => $abrevBase,
