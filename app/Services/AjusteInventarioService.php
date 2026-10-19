@@ -426,29 +426,47 @@ class AjusteInventarioService
         });
     }
 
-    /**
-     * Enriquecer un modelo de ajuste con sus métricas financieras calculadas
-     */
-    public function enriquecerAjusteConFinanzas(AjusteInventario $ajuste, ?float $costo = null, ?float $venta = null): AjusteInventario
+    private array $medidasBaseCache = [];
+
+    private function preCargarMedidasBase(): void
     {
-        $medidaBase = DB::table('Detalle_Producto_medida as dpm')
+        if (!empty($this->medidasBaseCache)) {
+            return;
+        }
+
+        $medidas = DB::table('Detalle_Producto_medida as dpm')
             ->join('unidades_medida as um', 'um.unidades_medidaId', '=', 'dpm.Detalle_Producto_medida_unidades_medidaId')
-            ->where('dpm.Detalle_Producto_medida_ProductoId', $ajuste->Ajuste_inventario_ProductoId)
             ->where('dpm.Detalle_Producto_medidaEliminado', 'N')
             ->where(function ($q) {
                 $q->where('dpm.Detalle_Producto_medida_factor_conversion', 1)
                   ->orWhere('um.unidades_medidaEsBase', 1);
             })
             ->select('dpm.*', 'um.unidades_medidaAbreviatura', 'um.unidades_medidaDescripcionUnidades')
-            ->first();
+            ->get();
+
+        foreach ($medidas as $m) {
+            $this->medidasBaseCache[$m->Detalle_Producto_medida_ProductoId] = $m;
+        }
+    }
+
+    /**
+     * Enriquecer un modelo de ajuste con sus métricas financieras calculadas
+     */
+    public function enriquecerAjusteConFinanzas(AjusteInventario $ajuste, ?float $costo = null, ?float $venta = null): AjusteInventario
+    {
+        $this->preCargarMedidasBase();
+        $prodId = $ajuste->Ajuste_inventario_ProductoId;
+        $medidaBase = $this->medidasBaseCache[$prodId] ?? null;
 
         if (!$medidaBase) {
             $medidaBase = DB::table('Detalle_Producto_medida as dpm')
                 ->join('unidades_medida as um', 'um.unidades_medidaId', '=', 'dpm.Detalle_Producto_medida_unidades_medidaId')
-                ->where('dpm.Detalle_Producto_medida_ProductoId', $ajuste->Ajuste_inventario_ProductoId)
+                ->where('dpm.Detalle_Producto_medida_ProductoId', $prodId)
                 ->where('dpm.Detalle_Producto_medidaEliminado', 'N')
                 ->select('dpm.*', 'um.unidades_medidaAbreviatura', 'um.unidades_medidaDescripcionUnidades')
                 ->first();
+
+            $this->medidasBaseCache[$prodId] = $medidaBase;
         }
 
         if ($costo === null || $venta === null) {

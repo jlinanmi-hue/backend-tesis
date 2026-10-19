@@ -1127,7 +1127,7 @@ class InventarioService
 
     public function obtenerUbicacionesActivas(): Collection
     {
-        return ProductoUbi::where('producto_ubi_eliminado', 'N')
+        return ProductoUbi::where('producto_ubi_Eliminado', 'N')
             ->where('producto_ubi_estado', 'A')
             ->orderBy('producto_ubi_descripcion', 'asc')
             ->get();
