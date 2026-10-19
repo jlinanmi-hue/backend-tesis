@@ -179,10 +179,17 @@ class ProveedorRepository implements ProveedorRepositoryInterface
 
     public function getNextId(): string
     {
-        $last = DB::table('Proveedor')
-            ->select('ProveedorId')
-            ->where('ProveedorId', 'like', 'PRV-%')
-            ->orderByRaw('LEN(ProveedorId) DESC, ProveedorId DESC')
+        $lastQuery = DB::table('Proveedor')
+            ->select('ProveedorId');
+
+        if (DB::getDriverName() === 'pgsql') {
+            $lastQuery->whereRaw('"ProveedorId" ~ \'^PRV-[0-9]+$\'');
+        } else {
+            $lastQuery->whereRaw("ProveedorId LIKE 'PRV-[0-9]%'");
+        }
+
+        $last = $lastQuery
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("ProveedorId", \'\'))) DESC, "ProveedorId" DESC')
             ->first();
 
         if (!$last) {

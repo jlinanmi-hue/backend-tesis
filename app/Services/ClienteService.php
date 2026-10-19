@@ -76,9 +76,15 @@ class ClienteService
             $clienteId = $this->clienteRepository->getNextId();
             $audit = AuditHelper::getCreationAudit('Cliente');
 
+            $origen = 'Tienda';
+            if (!empty($datos['ClienteOrigen'])) {
+                $origen = strcasecmp($datos['ClienteOrigen'], 'whatsapp') === 0 ? 'WhatsApp' : 'Tienda';
+            }
+
             $payload = array_merge($datos, [
                 'ClienteId' => $clienteId,
                 'ClienteEstado' => $datos['ClienteEstado'] ?? 'A',
+                'ClienteOrigen' => $origen,
                 'ClienteEliminado' => 'N',
                 'ClienteComprasCount' => 0,
                 'ClienteTotalMonto' => 0.00,
@@ -119,6 +125,10 @@ class ClienteService
                         'ClienteNombre' => "Ya existe otro cliente con el nombre '{$nombre}'.",
                     ]);
                 }
+            }
+
+            if (isset($datos['ClienteOrigen'])) {
+                $datos['ClienteOrigen'] = strcasecmp($datos['ClienteOrigen'], 'whatsapp') === 0 ? 'WhatsApp' : 'Tienda';
             }
 
             $audit = AuditHelper::getModificationAudit('Cliente');

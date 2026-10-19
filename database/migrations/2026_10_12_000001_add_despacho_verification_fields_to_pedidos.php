@@ -23,37 +23,30 @@ return new class extends Migration
         //                         PedidoFechaDespacho, PedidoUsuarioDespacho
         // =====================================================================
 
-        $existingPedidoCols = DB::select("
-            SELECT COLUMN_NAME
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_NAME = 'Pedido'
-        ");
-        $pedidoCols = array_map(fn($c) => $c->COLUMN_NAME, $existingPedidoCols);
-
-        Schema::table('Pedido', function (Blueprint $table) use ($pedidoCols) {
+        Schema::table('Pedido', function (Blueprint $table) {
             // Estado de despacho — puede ya existir con el mismo nombre
-            if (!in_array('PedidoEstadoDespacho', $pedidoCols)) {
+            if (!Schema::hasColumn('Pedido', 'PedidoEstadoDespacho')) {
                 $table->string('PedidoEstadoDespacho', 30)->default('PENDIENTE_DESPACHO')->nullable();
             }
-            if (!in_array('PedidoTieneFaltante', $pedidoCols)) {
+            if (!Schema::hasColumn('Pedido', 'PedidoTieneFaltante')) {
                 $table->string('PedidoTieneFaltante', 1)->default('N')->nullable();
             }
-            if (!in_array('PedidoTotalDespachado', $pedidoCols)) {
+            if (!Schema::hasColumn('Pedido', 'PedidoTotalDespachado')) {
                 $table->decimal('PedidoTotalDespachado', 18, 2)->nullable();
             }
-            if (!in_array('PedidoFechaInicioDespacho', $pedidoCols)) {
+            if (!Schema::hasColumn('Pedido', 'PedidoFechaInicioDespacho')) {
                 $table->dateTime('PedidoFechaInicioDespacho')->nullable();
             }
-            if (!in_array('PedidoFechaFinDespacho', $pedidoCols)) {
+            if (!Schema::hasColumn('Pedido', 'PedidoFechaFinDespacho')) {
                 $table->dateTime('PedidoFechaFinDespacho')->nullable();
             }
-            if (!in_array('PedidoObservacionDespacho', $pedidoCols)) {
+            if (!Schema::hasColumn('Pedido', 'PedidoObservacionDespacho')) {
                 $table->string('PedidoObservacionDespacho', 500)->nullable();
             }
-            if (!in_array('PedidoDespachadoPor', $pedidoCols)) {
+            if (!Schema::hasColumn('Pedido', 'PedidoDespachadoPor')) {
                 $table->string('PedidoDespachadoPor', 100)->nullable();
             }
-            if (!in_array('PedidoCerradoPor', $pedidoCols)) {
+            if (!Schema::hasColumn('Pedido', 'PedidoCerradoPor')) {
                 $table->string('PedidoCerradoPor', 100)->nullable();
             }
         });
@@ -62,21 +55,14 @@ return new class extends Migration
         // TABLA: Detalle_Pedido_Productos — añadir campos de verificación por ítem
         // =====================================================================
 
-        $existingDetalleCols = DB::select("
-            SELECT COLUMN_NAME
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_NAME = 'Detalle_Pedido_Productos'
-        ");
-        $detalleCols = array_map(fn($c) => $c->COLUMN_NAME, $existingDetalleCols);
-
-        Schema::table('Detalle_Pedido_Productos', function (Blueprint $table) use ($detalleCols) {
-            if (!in_array('Detalle_Pedido_Productos_cantidad_despachada', $detalleCols)) {
+        Schema::table('Detalle_Pedido_Productos', function (Blueprint $table) {
+            if (!Schema::hasColumn('Detalle_Pedido_Productos', 'Detalle_Pedido_Productos_cantidad_despachada')) {
                 $table->decimal('Detalle_Pedido_Productos_cantidad_despachada', 18, 2)->nullable();
             }
-            if (!in_array('Detalle_Pedido_Productos_estado_item_despacho', $detalleCols)) {
+            if (!Schema::hasColumn('Detalle_Pedido_Productos', 'Detalle_Pedido_Productos_estado_item_despacho')) {
                 $table->string('Detalle_Pedido_Productos_estado_item_despacho', 30)->default('PENDIENTE')->nullable();
             }
-            if (!in_array('Detalle_Pedido_Productos_observacion_item', $detalleCols)) {
+            if (!Schema::hasColumn('Detalle_Pedido_Productos', 'Detalle_Pedido_Productos_observacion_item')) {
                 $table->string('Detalle_Pedido_Productos_observacion_item', 200)->nullable();
             }
         });
@@ -86,11 +72,19 @@ return new class extends Migration
         // Acelera la carga de la bandeja de despacho
         // =====================================================================
         try {
-            DB::statement("
-                CREATE INDEX IX_Pedido_EstadoDespacho
-                ON Pedido(PedidoEstadoDespacho, PedidoFechaCreacion)
-                INCLUDE (Pedido_ClienteId, PedidoTotal, PedidoTotalDespachado, PedidoTieneFaltante)
-            ");
+            if (DB::getDriverName() === 'pgsql') {
+                DB::statement('
+                    CREATE INDEX IF NOT EXISTS "ix_pedido_estadodespacho"
+                    ON "Pedido"("PedidoEstadoDespacho", "PedidoFechaCreacion")
+                    INCLUDE ("Pedido_ClienteId", "PedidoTotal", "PedidoTotalDespachado", "PedidoTieneFaltante")
+                ');
+            } else {
+                DB::statement("
+                    CREATE INDEX IX_Pedido_EstadoDespacho
+                    ON Pedido(PedidoEstadoDespacho, PedidoFechaCreacion)
+                    INCLUDE (Pedido_ClienteId, PedidoTotal, PedidoTotalDespachado, PedidoTieneFaltante)
+                ");
+            }
         } catch (\Throwable $e) {
             // El índice puede ya existir si se re-ejecuta la migración
         }
@@ -100,7 +94,11 @@ return new class extends Migration
     {
         // Eliminar índice primero
         try {
-            DB::statement('DROP INDEX IF EXISTS IX_Pedido_EstadoDespacho ON Pedido');
+            if (DB::getDriverName() === 'pgsql') {
+                DB::statement('DROP INDEX IF EXISTS "ix_pedido_estadodespacho"');
+            } else {
+                DB::statement('DROP INDEX IF EXISTS IX_Pedido_EstadoDespacho ON Pedido');
+            }
         } catch (\Throwable $e) {}
 
         // Revertir columnas de Pedido

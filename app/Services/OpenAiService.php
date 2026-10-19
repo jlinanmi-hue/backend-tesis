@@ -53,11 +53,19 @@ class OpenAiService
     /**
      * Catálogo de declaraciones de Tools adaptadas para OpenAI con filtrado inteligente.
      */
-    public function getRegisteredTools(bool $readOnly = false, ?string $userQuery = null): array
+    public function getRegisteredTools(bool $readOnly = false, ?string $userQuery = null, ?string $context = null): array
     {
-        $geminiTools = $this->geminiService->getRegisteredTools($readOnly, $userQuery);
+        $geminiTools = $this->geminiService->getRegisteredTools($readOnly, $userQuery, $context);
         $this->lastFilterMetadata = $this->geminiService->getLastFilterMetadata();
         return $this->normalizeToolsForOpenAi($geminiTools);
+    }
+
+    /**
+     * Retorna únicamente las 11 herramientas autorizadas para WhatsApp en formato OpenAI.
+     */
+    public function getWhatsAppTools(): array
+    {
+        return $this->getRegisteredTools(false, null, 'whatsapp');
     }
 
     /**

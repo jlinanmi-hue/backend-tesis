@@ -5,6 +5,7 @@ use App\Http\Controllers\AjusteInventarioController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\CanalPedidoController;
 use App\Http\Controllers\CategoriaProductoController;
+use App\Http\Controllers\ChatWhatsAppController;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\DeliveryController;
@@ -114,6 +115,13 @@ Route::prefix('inventario')->group(function () {
     Route::post('/productos/{id}/imagen', [ProductoController::class, 'uploadImagen']);
 });
 
+// Alias directo para consultas de Kardex (/api/kardex/...)
+Route::prefix('kardex')->group(function () {
+    Route::get('/movimientos', [MovimientoController::class, 'index']);
+    Route::get('/resumen', [ProductoController::class, 'resumenStock']);
+    Route::get('/producto/{productoId}', [MovimientoController::class, 'porProducto']);
+});
+
 // 4. Rutas del Módulo de Gestión de Proveedores
 Route::prefix('proveedores')->group(function () {
     Route::get('/', [ProveedorController::class, 'index']);
@@ -153,7 +161,7 @@ Route::prefix('unidades-medida')->group(function () {
 });
 
 // 7. Rutas del Módulo de Canales de Pedido
-Route::prefix('canales-pedido')->group(function () {
+$registerCanalRoutes = function () {
     Route::get('/', [CanalPedidoController::class, 'index']);
     Route::post('/', [CanalPedidoController::class, 'store']);
     Route::get('/{id}', [CanalPedidoController::class, 'show']);
@@ -161,7 +169,9 @@ Route::prefix('canales-pedido')->group(function () {
     Route::delete('/{id}', [CanalPedidoController::class, 'destroy']);
     Route::patch('/{id}/estado', [CanalPedidoController::class, 'updateEstado']);
     Route::post('/{id}/restore', [CanalPedidoController::class, 'restore']);
-});
+};
+Route::prefix('canales-pedido')->group($registerCanalRoutes);
+Route::prefix('canales')->group($registerCanalRoutes);
 
 // 7.1. Rutas del Módulo de Zonas de Delivery (Catálogos)
 $registerZonaRoutes = function () {
@@ -245,6 +255,7 @@ Route::prefix('ordenes-compra')->group(function () {
     Route::get('/siguiente-codigo', [OrdenCompraController::class, 'siguienteCodigo']);
     Route::get('/estados', [OrdenCompraController::class, 'estados']);
     Route::get('/reporte/pdf', [OrdenCompraController::class, 'reportePdf']);
+    Route::get('/precarga', [OrdenCompraController::class, 'precarga']);
     Route::get('/', [OrdenCompraController::class, 'index']);
     Route::post('/', [OrdenCompraController::class, 'store']);
     Route::post('/compra-rapida', [OrdenCompraController::class, 'compraRapida']);
@@ -293,6 +304,9 @@ Route::prefix('ajustes')->group(function () {
 Route::prefix('notificaciones')->group(function () {
     Route::get('/stream', [NotificacionController::class, 'stream']);
     Route::get('/', [NotificacionController::class, 'index']);
+    Route::get('/motivos', [NotificacionController::class, 'motivos']);
+    Route::get('/buscar-usuarios', [NotificacionController::class, 'buscarUsuarios']);
+    Route::post('/enviar-manual', [NotificacionController::class, 'enviarManual']);
     Route::patch('/{id}/leer', [NotificacionController::class, 'marcarLeida']);
     Route::post('/marcar-todas', [NotificacionController::class, 'marcarTodas']);
     Route::delete('/{id}', [NotificacionController::class, 'destroy']);
@@ -399,5 +413,23 @@ Route::prefix('despacho')->group(function () {
     Route::post('/pedidos/{id}/faltante',               [DespachoController::class, 'faltante']);
     Route::post('/pedidos/{id}/rechazar',               [DespachoController::class, 'rechazar']);
 });
+
+// 25. Módulo de Chatbot WhatsApp (Webhook n8n)
+Route::get('/chat/whatsapp', function () {
+    return response()->json([
+        'status'          => 'online',
+        'service'         => 'Comercial Valencia - WhatsApp Bot Webhook',
+        'method_required' => 'POST',
+        'instructions'    => 'Este endpoint está activo y esperando mensajes. Para interactuar envía una petición POST con el header X-Webhook-Token y el body JSON {"phone_number": "...", "message": "..."}.',
+        'timestamp'       => now()->toIso8601String(),
+    ]);
+});
+
+Route::middleware('verify.whatsapp')->prefix('chat')->group(function () {
+    Route::post('/whatsapp', [ChatWhatsAppController::class, 'handle']);
+    Route::get('/whatsapp/audit/{phone}', [ChatWhatsAppController::class, 'audit']);
+});
+
+
 
 

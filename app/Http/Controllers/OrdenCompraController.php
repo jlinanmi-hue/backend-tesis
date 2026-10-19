@@ -634,4 +634,124 @@ class OrdenCompraController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Endpoint de precarga inteligente para Orden de Compra sugerida por IA / Alerta de Stock.
+     * GET /api/ordenes-compra/precarga?producto={id}&cantidad={sugerida}
+     */
+    public function precarga(Request $request): JsonResponse
+    {
+        try {
+            $productoIdentificador = $request->input('producto');
+            $cantidadSugerida = (float) $request->input('cantidad', 1);
+            if ($cantidadSugerida <= 0) {
+                $cantidadSugerida = 1;
+            }
+
+            if (empty($productoIdentificador)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'El parámetro producto es requerido.',
+                ], 422);
+            }
+
+            $producto = \App\Models\Producto::with([
+                'proveedores' => fn($q) => $q->where('ProveedorEliminado', 'N'),
+                'todasDetalleProductoMedidas.unidadMedida',
+                'categoria',
+            ])
+            ->where(function ($q) use ($productoIdentificador) {
+                $q->where('ProductoId', $productoIdentificador)
+                  ->orWhere('ProductoNombre', $productoIdentificador);
+            })
+            ->where('ProductoEliminado', 'N')
+            ->first();
+
+            if (!$producto) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "Producto '{$productoIdentificador}' no encontrado.",
+                ], 404);
+            }
+
+            // 1. Resolver Proveedor habitual o principal:
+            // a) Primero desde la relación Producto_Proveedor
+            $proveedor = $producto->proveedores->first();
+
+            // b) Si no tiene proveedor directo, buscar el proveedor de la última orden de compra
+            if (!$proveedor) {
+                $ultimoDetalle = \App\Models\DetalleOrdenCompra::where('Detalle_ProductoId', $producto->ProductoId)
+                    ->latest('Detalle_Orden_CompraId')
+                    ->first();
+
+                if ($ultimoDetalle && $ultimoDetalle->ordenCompra && $ultimoDetalle->ordenCompra->proveedor) {
+                    $proveedor = $ultimoDetalle->ordenCompra->proveedor;
+                }
+            }
+
+            // c) Fallback: primer proveedor activo del sistema
+            if (!$proveedor) {
+                $proveedor = \App\Models\Proveedor::where('ProveedorEliminado', 'N')->first();
+            }
+
+            // 2. Resolver Unidad de Medida (preferir base con factor 1)
+            $medidas = $producto->todasDetalleProductoMedidas ?? collect();
+            $medidaBase = $medidas->firstWhere('Detalle_Producto_medida_factor_conversion', 1) ?: $medidas->first();
+
+            $unidadId = $medidaBase?->Detalle_Producto_medida_unidades_medidaId ?? 'UND-00001';
+            $unidadNombre = $medidaBase?->unidadMedida?->unidades_medidaDescripcionUnidades ?? 'Unidad';
+            $unidadAbrev = $medidaBase?->unidadMedida?->unidades_medidaAbreviatura ?? 'UND';
+            $precioUnitario = (float) ($medidaBase?->Detalle_Producto_medida_precio_compra ?? 0);
+
+            $unidadesDisponibles = $medidas->map(function ($m) {
+                return [
+                    'unidadMedidaId'    => $m->Detalle_Producto_medida_unidades_medidaId,
+                    'unidadNombre'      => $m->unidadMedida?->unidades_medidaDescripcionUnidades ?? 'Unidad',
+                    'unidadAbreviatura' => $m->unidadMedida?->unidades_medidaAbreviatura ?? 'UND',
+                    'factorConversion'  => (int) ($m->Detalle_Producto_medida_factor_conversion ?? 1),
+                    'precioCompra'      => (float) ($m->Detalle_Producto_medida_precio_compra ?? 0),
+                ];
+            })->values()->all();
+
+            $subtotal = round($cantidadSugerida * $precioUnitario, 2);
+
+            $payload = [
+                'proveedor' => $proveedor ? [
+                    'ProveedorId' => $proveedor->ProveedorId,
+                    'ProveedorRazonSocial' => $proveedor->ProveedorRazonSocial,
+                    'ProveedorRuc' => $proveedor->ProveedorRuc,
+                    'ProveedorTelefono' => $proveedor->ProveedorTelefono,
+                ] : null,
+                'productos' => [
+                    [
+                        'tempId'              => "prefill_{$producto->ProductoId}_" . time(),
+                        'productoId'          => $producto->ProductoId,
+                        'productoNombre'      => $producto->ProductoNombre,
+                        'productoMarca'       => $producto->ProductoMarca ?? 'Genérico',
+                        'unidadMedidaId'      => $unidadId,
+                        'unidadNombre'        => $unidadNombre,
+                        'unidadAbreviatura'   => $unidadAbrev,
+                        'cantidad'            => $cantidadSugerida,
+                        'precioUnitario'      => $precioUnitario,
+                        'subtotal'            => $subtotal,
+                        'unidadesDisponibles' => $unidadesDisponibles,
+                    ],
+                ],
+                'observacion' => "Orden sugerida automáticamente por Valencia AI ante zona de alerta o quiebre de stock.",
+            ];
+
+            return response()->json([
+                'success' => true,
+                'data'    => $payload,
+                'message' => 'Datos de precarga obtenidos exitosamente.',
+            ]);
+
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Error al precargar orden de compra: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }
+

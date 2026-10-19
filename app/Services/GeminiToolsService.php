@@ -56,8 +56,8 @@ class GeminiToolsService
         'obtener_top_clientes', 'obtener_reporte_inventario',
         // Notificaciones (3)
         'listar_alertas', 'marcar_alerta_leida', 'notificar_pedidos_por_expirar',
-        // Utilidades (4)
-        'solicitar_campo_faltante', 'confirmar_accion', 'buscar_global', 'obtener_ayuda',
+        // Utilidades (5)
+        'solicitar_campo_faltante', 'confirmar_accion', 'buscar_global', 'obtener_ayuda', 'consultar_ruc',
         // MODULO 11: BI Conversacional — Gráficos y Análisis Dinámicos (6) — Total: 67 tools
         'generar_grafico_dashboard', 'consultar_kpi', 'generar_reporte_periodo', 'comparar_periodos', 'renderizar_tabla',
         'listar_graficos_disponibles',
@@ -82,12 +82,29 @@ class GeminiToolsService
         'obtener_estadisticas_generales', 'obtener_ventas_por_periodo', 'obtener_top_productos',
         'obtener_top_clientes', 'obtener_reporte_inventario',
         'listar_alertas',
-        'buscar_global', 'obtener_ayuda',
+        'buscar_global', 'obtener_ayuda', 'consultar_ruc',
         // BI Conversacional (solo lectura – consultas analíticas)
         'generar_grafico_dashboard', 'consultar_kpi', 'generar_reporte_periodo', 'comparar_periodos', 'renderizar_tabla',
         'listar_graficos_disponibles',
         // Predicciones de Reabastecimiento (solo lectura)
         'obtener_predicciones_compra',
+    ];
+
+    /**
+     * Catálogo estricto de herramientas permitidas para el canal de WhatsApp.
+     */
+    public const WHATSAPP_ALLOWED_TOOLS = [
+        'buscar_producto',
+        'consultar_stock',
+        'listar_categorias',
+        'buscar_cliente',
+        'crear_cliente',
+        'obtener_historial_cliente',
+        'crear_pedido_cliente',
+        'obtener_pedido',
+        'solicitar_campo_faltante',
+        'confirmar_accion',
+        'consultar_ruc',
     ];
 
     public function __construct(
@@ -99,7 +116,8 @@ class GeminiToolsService
         protected CanalPedidoService     $canalPedidoService,
         protected NotificacionService    $notificacionService,
         protected DashboardService       $dashboardService,
-        protected ChartGeneratorService  $chartGeneratorService
+        protected ChartGeneratorService  $chartGeneratorService,
+        protected SunatService           $sunatService
     ) {}
 
     /**
@@ -136,8 +154,26 @@ class GeminiToolsService
     /**
      * Dispatch principal con validación de existencia, control de solo lectura y caché.
      */
-    public function dispatch(string $toolName, array $args, bool $readOnlyMode = false, ?array $liveDraft = null, ?string $userMessage = null, ?string $sessionId = null): array
+    public function dispatch(
+        string $toolName,
+        array $args,
+        bool $readOnlyMode = false,
+        ?array $liveDraft = null,
+        ?string $userMessage = null,
+        ?string $sessionId = null,
+        ?string $context = null
+    ): array
     {
+        // 0. Barrera de seguridad estricta para canal WhatsApp (Barrera 2)
+        if ($context === 'whatsapp' && !in_array($toolName, self::WHATSAPP_ALLOWED_TOOLS, true)) {
+            Log::warning("Valencia AI WhatsApp: Herramienta '{$toolName}' bloqueada por política de canal.");
+            return [
+                'success' => false,
+                'data'    => null,
+                'message' => 'Un asesor se comunicará contigo para ayudarte con eso. 😊',
+            ];
+        }
+
         // 1. Manejo de tool no reconocida (Alucinaciones de Gemini)
         if (!in_array($toolName, self::AVAILABLE_TOOLS, true)) {
             Log::warning("Valencia AI: Tool inexistente solicitada por Gemini", [
@@ -676,11 +712,12 @@ class GeminiToolsService
                 'marcar_alerta_leida'          => $this->marcarAlertaLeida($args),
                 'notificar_pedidos_por_expirar' => $this->notificarPedidosPorExpirar($args),
 
-                // MODULO 10: UTILIDADES (4 tools)
+                // MODULO 10: UTILIDADES (5 tools)
                 'solicitar_campo_faltante'     => $this->solicitarCampoFaltante($args),
                 'confirmar_accion'             => $this->confirmarAccion($args),
                 'buscar_global'                => $this->buscarGlobal($args),
                 'obtener_ayuda'                => $this->obtenerAyuda($args),
+                'consultar_ruc'                => $this->consultarRuc($args),
 
                 // MODULO 11: BI CONVERSACIONAL (6 tools)
                 'listar_graficos_disponibles'  => $this->listarGraficosDisponibles($args),
@@ -2106,6 +2143,7 @@ class GeminiToolsService
             'ClienteNumero'    => $telefono,
             'ClienteDireccion' => $direccion,
             'ClienteEstado'    => 'A',
+            'ClienteOrigen'    => $args['ClienteOrigen'] ?? $args['origen'] ?? 'Tienda',
         ];
 
         $cliente = $this->clienteService->crearCliente($datosCliente);
@@ -3625,12 +3663,10 @@ class GeminiToolsService
         $query = MovimientoProducto::where('Movimiento_productoFecha_Movimiento', '>=', $desde);
 
         $totalEntradas = (clone $query)->where('Movimiento_productoTipoMovimiento', 'E')
-            ->selectRaw('SUM(TRY_CAST(Movimiento_productoCantidadEntrada AS DECIMAL(18,2))) as total')
-            ->value('total') ?? 0;
+            ->sum('Movimiento_productoCantidadEntrada');
 
         $totalSalidas = (clone $query)->where('Movimiento_productoTipoMovimiento', 'S')
-            ->selectRaw('SUM(TRY_CAST(Movimiento_productoCantidadSalida AS DECIMAL(18,2))) as total')
-            ->value('total') ?? 0;
+            ->sum('Movimiento_productoCantidadSalida');
 
         $resumen = [
             'periodo_dias'      => $dias,
@@ -3659,8 +3695,8 @@ class GeminiToolsService
         $pedidos = Pedido::where('PedidoFecha_pedido', '>=', $desde)
             ->where('PedidoEliminado', 'N')
             ->where('PedidoEstado_pedido', 'C')
-            ->selectRaw('CAST(PedidoFecha_pedido AS DATE) as fecha, COUNT(*) as cantidad, SUM(PedidoTotal) as total')
-            ->groupByRaw('CAST(PedidoFecha_pedido AS DATE)')
+            ->selectRaw('CAST("PedidoFecha_pedido" AS DATE) as fecha, COUNT(*) as cantidad, SUM("PedidoTotal") as total')
+            ->groupByRaw('CAST("PedidoFecha_pedido" AS DATE)')
             ->orderBy('fecha', 'desc')
             ->get();
         $totalGeneral = $pedidos->sum('total');
@@ -3681,9 +3717,9 @@ class GeminiToolsService
             ->select(
                 'prod.ProductoId',
                 'prod.ProductoNombre',
-                DB::raw('SUM(dpp.Detalle_Pedido_Productos_cantidad) as total_vendido'),
-                DB::raw('SUM(dpp.Detalle_Pedido_Productos_subtotal) as total_facturado'),
-                DB::raw('COUNT(DISTINCT p.PedidoId) as en_pedidos')
+                DB::raw('SUM(dpp."Detalle_Pedido_Productos_cantidad") as total_vendido'),
+                DB::raw('SUM(dpp."Detalle_Pedido_Productos_subtotal") as total_facturado'),
+                DB::raw('COUNT(DISTINCT p."PedidoId") as en_pedidos')
             )
             ->groupBy('prod.ProductoId', 'prod.ProductoNombre')
             ->orderByDesc('total_vendido')
@@ -3705,8 +3741,8 @@ class GeminiToolsService
             ->select(
                 'c.ClienteId',
                 'c.ClienteNombre',
-                DB::raw('COUNT(p.PedidoId) as total_pedidos'),
-                DB::raw('SUM(p.PedidoTotal) as total_comprado')
+                DB::raw('COUNT(p."PedidoId") as total_pedidos'),
+                DB::raw('SUM(p."PedidoTotal") as total_comprado')
             )
             ->groupBy('c.ClienteId', 'c.ClienteNombre')
             ->orderByDesc('total_comprado')
@@ -3953,5 +3989,49 @@ class GeminiToolsService
             'chips'   => $chips,
             'message' => $mensaje,
         ];
+    }
+
+    /**
+     * Consulta información de RUC o DNI mediante SunatService.
+     */
+    private function consultarRuc(array $args): array
+    {
+        $ruc = trim((string)($args['ruc'] ?? $args['numero'] ?? ''));
+        if (empty($ruc)) {
+            return [
+                'success' => false,
+                'status' => 'missing_fields',
+                'campos_faltantes' => ['ruc'],
+                'data' => null,
+                'message' => 'Se requiere el número de RUC o DNI para realizar la consulta.',
+            ];
+        }
+
+        try {
+            $resultado = $this->sunatService->consultarRuc($ruc);
+            $razonSocial = $resultado['razon_social'] ?? $resultado['data']['ClienteNombre'] ?? 'No especificado';
+            $direccion = $resultado['direccion'] ?? $resultado['data']['ClienteDireccion'] ?? 'No especificada';
+            $estado = $resultado['estado'] ?? 'ACTIVO';
+            $condicion = $resultado['condicion'] ?? 'HABIDO';
+
+            return [
+                'success' => true,
+                'data' => [
+                    'ruc'          => $ruc,
+                    'razon_social' => $razonSocial,
+                    'direccion'    => $direccion,
+                    'estado'       => $estado,
+                    'condicion'    => $condicion,
+                ],
+                'message' => "Consulta exitosa para {$ruc}: {$razonSocial}. Estado: {$estado}, Condición: {$condicion}. Dirección: {$direccion}.",
+            ];
+        } catch (Exception $e) {
+            Log::warning("consultarRuc tool error para {$ruc}: " . $e->getMessage());
+            return [
+                'success' => false,
+                'data' => null,
+                'message' => "No se pudo obtener información para el RUC/DNI {$ruc}: " . $e->getMessage(),
+            ];
+        }
     }
 }

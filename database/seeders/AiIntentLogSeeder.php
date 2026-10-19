@@ -14,7 +14,13 @@ class AiIntentLogSeeder extends Seeder
     public function run(): void
     {
         // Desactivar restricciones de claves foráneas temporalmente
-        DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT all"');
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT all"');
+        } elseif (DB::getDriverName() === 'pgsql') {
+            try {
+            DB::statement("SET session_replication_role = 'replica';");
+        } catch (\Throwable $e) {}
+        }
 
         // Limpiar tabla antes de poblar
         DB::table('ai_intent_logs')->delete();
@@ -3531,7 +3537,8 @@ Invalid JSON payload received. Unknown n',
             ],
         ];
 
-        // Inserción en bloques con IDENTITY_INSERT habilitado
+                if (DB::getDriverName() === 'sqlsrv') {
+            // Inserción en bloques con IDENTITY_INSERT habilitado (SQL Server)
         foreach (array_chunk($rows, 25) as $chunk) {
             if (empty($chunk)) continue;
             $columns = array_keys($chunk[0]);
@@ -3562,6 +3569,11 @@ Invalid JSON payload received. Unknown n',
 
             DB::unprepared($sql);
         }
+    } else {
+        foreach (array_chunk($rows, 50) as $chunk) {
+            DB::table('ai_intent_logs')->insert($chunk);
+        }
+    }
 
         // Reactivar restricciones de claves foráneas
         // DB::statement(CHECK CONSTRAINT all);

@@ -105,7 +105,7 @@ class UnidadesMedidaRepository implements UnidadesMedidaRepositoryInterface
         $last = DB::table('unidades_medida')
             ->select('unidades_medidaId')
             ->where('unidades_medidaId', 'like', 'UND-%')
-            ->orderByRaw('LEN(unidades_medidaId) DESC, unidades_medidaId DESC')
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("unidades_medidaId", \'\'))) DESC, "unidades_medidaId" DESC')
             ->first();
 
         if (!$last) {

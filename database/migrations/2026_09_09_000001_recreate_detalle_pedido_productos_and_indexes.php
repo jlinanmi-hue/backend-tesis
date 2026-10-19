@@ -53,8 +53,12 @@ return new class extends Migration
 
         // 3. Crear índice para agilizar consultas y validaciones de stock en Producto
         try {
-            DB::statement("IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Producto_StockActual') CREATE INDEX IX_Producto_StockActual ON Producto (ProductoStockActual);");
-        } catch (\Exception $e) {
+            if (DB::getDriverName() === 'sqlsrv') {
+                DB::statement("IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Producto_StockActual') CREATE INDEX IX_Producto_StockActual ON Producto (ProductoStockActual);");
+            } else {
+                DB::statement('CREATE INDEX IF NOT EXISTS "ix_producto_stockactual" ON "Producto" ("ProductoStockActual")');
+            }
+        } catch (\Throwable $e) {
             // Continuar si ya existiera el índice
         }
     }
@@ -67,8 +71,12 @@ return new class extends Migration
         Schema::dropIfExists('Detalle_Pedido_Productos');
 
         try {
-            DB::statement("IF EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Producto_StockActual') DROP INDEX IX_Producto_StockActual ON Producto;");
-        } catch (\Exception $e) {
+            if (DB::getDriverName() === 'sqlsrv') {
+                DB::statement("IF EXISTS (SELECT * FROM sys.indexes WHERE name = 'IX_Producto_StockActual') DROP INDEX IX_Producto_StockActual ON Producto;");
+            } else {
+                DB::statement('DROP INDEX IF EXISTS "ix_producto_stockactual"');
+            }
+        } catch (\Throwable $e) {
         }
     }
 };

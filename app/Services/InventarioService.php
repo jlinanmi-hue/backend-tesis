@@ -15,6 +15,7 @@ use Exception;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
@@ -67,7 +68,7 @@ class InventarioService
         }
 
         if (!empty($filters['stockBajo']) && filter_var($filters['stockBajo'], FILTER_VALIDATE_BOOLEAN)) {
-            $query->whereRaw('CAST(ProductoStockActual AS FLOAT) <= CAST(ProductoStockMinimo AS FLOAT)');
+            $query->whereColumn('ProductoStockActual', '<=', 'ProductoStockMinimo');
         }
 
         $query->orderBy('ProductoFechaCreacion', 'desc');
@@ -597,6 +598,13 @@ class InventarioService
                 'ProductoStockActual' => (string) $nuevoStock,
             ], $auditProducto));
 
+            // 8. Disparar evaluación asíncrona de alertas inteligentes de stock
+            try {
+                app(\App\Services\StockAlertService::class)->evaluar($producto->fresh());
+            } catch (\Throwable $e) {
+                Log::warning("StockAlert: Error evaluando producto {$producto->ProductoId}: {$e->getMessage()}");
+            }
+
             return $movimiento->fresh(['producto.categoria', 'unidadMedida', 'detalleProductoMedida']);
         });
     }
@@ -606,11 +614,34 @@ class InventarioService
      */
     public function listarMovimientos(array $filters = [], int $perPage = 8): LengthAwarePaginator|Collection
     {
-        $query = MovimientoProducto::with([
-            'producto.categoria',
-            'producto.detalleProductoMedidas.unidadMedida',
-            'unidadMedida',
-        ])->where('Movimiento_productoEliminado', 'N');
+        $query = MovimientoProducto::query()
+            ->select([
+                'Movimiento_productoId',
+                'Movimiento_producto_ProductoId',
+                'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId',
+                'Movimiento_productoTipoMovimiento',
+                'Movimiento_productoSubtipo',
+                'Movimiento_productoCantidadEntrada',
+                'Movimiento_productoCantidadSalida',
+                'Movimiento_productoCantidadSaldo',
+                'Movimiento_productoCantidadPresentacion',
+                'Movimiento_productoCostoPrecioUnitario',
+                'Movimiento_productoDocumentoOperacionId',
+                'Movimiento_productoReferenciaId',
+                'Movimiento_productoReferenciaTipo',
+                'Movimiento_productoMotivo',
+                'Movimiento_productoFecha_Movimiento',
+                'Movimiento_productoFechaCreacion',
+                'Movimiento_productoUsuarioCreacion',
+                'Movimiento_productoEliminado',
+            ])
+            ->with([
+                'producto:ProductoId,ProductoNombre,ProductoMarca,Producto_Categoria_ProductoId',
+                'producto.categoria:Categoria_ProductoId,Categoria_ProductoDescripcion_categoria',
+                'producto.detalleProductoMedidas:Detalle_Producto_medida_ProductoId,Detalle_Producto_medida_unidades_medidaId,Detalle_Producto_medida_factor_conversion,Detalle_Producto_medida_precio_venta',
+                'producto.detalleProductoMedidas.unidadMedida:unidades_medidaId,unidades_medidaDescripcionUnidades,unidades_medidaAbreviatura',
+                'unidadMedida:unidades_medidaId,unidades_medidaDescripcionUnidades,unidades_medidaAbreviatura',
+            ])->where('Movimiento_productoEliminado', 'N');
 
         if (!empty($filters['search'])) {
             $search = $filters['search'];
@@ -943,7 +974,28 @@ class InventarioService
      */
     public function obtenerMovimientosPorProducto(string $productoId, int $perPage = 15): LengthAwarePaginator
     {
-        return MovimientoProducto::with(['unidadMedida'])
+        return MovimientoProducto::query()
+            ->select([
+                'Movimiento_productoId',
+                'Movimiento_producto_ProductoId',
+                'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId',
+                'Movimiento_productoTipoMovimiento',
+                'Movimiento_productoSubtipo',
+                'Movimiento_productoCantidadEntrada',
+                'Movimiento_productoCantidadSalida',
+                'Movimiento_productoCantidadSaldo',
+                'Movimiento_productoCantidadPresentacion',
+                'Movimiento_productoCostoPrecioUnitario',
+                'Movimiento_productoDocumentoOperacionId',
+                'Movimiento_productoReferenciaId',
+                'Movimiento_productoReferenciaTipo',
+                'Movimiento_productoMotivo',
+                'Movimiento_productoFecha_Movimiento',
+                'Movimiento_productoFechaCreacion',
+                'Movimiento_productoUsuarioCreacion',
+                'Movimiento_productoEliminado',
+            ])
+            ->with(['unidadMedida:unidades_medidaId,unidades_medidaDescripcionUnidades,unidades_medidaAbreviatura'])
             ->where('Movimiento_producto_ProductoId', $productoId)
             ->where('Movimiento_productoEliminado', 'N')
             ->orderBy('Movimiento_productoFecha_Movimiento', 'desc')
@@ -1000,7 +1052,7 @@ class InventarioService
         return Producto::with(['categoria', 'detalleProductoMedidas.unidadMedida'])
             ->where('ProductoEliminado', 'N')
             ->where('ProductoEstado', 'A')
-            ->whereRaw('CAST(ProductoStockActual AS FLOAT) <= CAST(ProductoStockMinimo AS FLOAT)')
+            ->whereColumn('ProductoStockActual', '<=', 'ProductoStockMinimo')
             ->get();
     }
 
@@ -1112,7 +1164,7 @@ class InventarioService
         $last = DB::table('Producto')
             ->select('ProductoId')
             ->where('ProductoId', 'like', 'PROD-%')
-            ->orderByRaw('LEN(ProductoId) DESC, ProductoId DESC')
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("ProductoId", \'\'))) DESC, "ProductoId" DESC')
             ->first();
 
         if (!$last) {
@@ -1133,7 +1185,7 @@ class InventarioService
         $last = DB::table('Movimiento_producto')
             ->select('Movimiento_productoId')
             ->where('Movimiento_productoId', 'like', 'MOV-%')
-            ->orderByRaw('LEN(Movimiento_productoId) DESC, Movimiento_productoId DESC')
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("Movimiento_productoId", \'\'))) DESC, "Movimiento_productoId" DESC')
             ->first();
 
         if (!$last) {
@@ -1160,8 +1212,8 @@ class InventarioService
         ])
         ->where('ProductoEliminado', 'N')
         ->where('ProductoEstado', 'A')
-        ->whereRaw('CAST(ProductoStockActual AS FLOAT) <= CAST(ProductoStockMinimo AS FLOAT)')
-        ->orderByRaw('(CAST(ProductoStockMinimo AS FLOAT) - CAST(ProductoStockActual AS FLOAT)) DESC')
+        ->whereColumn('ProductoStockActual', '<=', 'ProductoStockMinimo')
+        ->orderByRaw('("ProductoStockMinimo" - "ProductoStockActual") DESC')
         ->take($limit)
         ->get();
 
@@ -1254,29 +1306,48 @@ class InventarioService
         ->where('ProductoEstado', 'A');
 
         // Fase 1: Búsqueda SQL directa e insensible a tildes / mayúsculas
+        $isPgsql = DB::getDriverName() === 'pgsql';
+
         if (count($words) > 1) {
-            $query->where(function ($q) use ($words, $term) {
+            $query->where(function ($q) use ($words, $term, $isPgsql) {
                 $q->where('ProductoId', 'like', "%{$term}%")
-                  ->orWhere(function ($sub) use ($words) {
+                  ->orWhere(function ($sub) use ($words, $isPgsql) {
                       foreach ($words as $w) {
-                          $sub->where(function ($wSub) use ($w) {
-                              $wSub->whereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"])
-                                   ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"]);
+                          $sub->where(function ($wSub) use ($w, $isPgsql) {
+                              if ($isPgsql) {
+                                  $wSub->where('ProductoNombre', 'ILIKE', "%{$w}%")
+                                       ->orWhere('ProductoMarca', 'ILIKE', "%{$w}%");
+                              } else {
+                                  $wSub->whereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"])
+                                       ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"]);
+                              }
                           });
                       }
                   });
             });
         } else {
-            $query->where(function ($q) use ($term, $norm) {
-                $q->whereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
-                  ->orWhereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"])
-                  ->orWhere('ProductoId', 'like', "%{$term}%")
-                  ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
-                  ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"])
-                  ->orWhereHas('categoria', function ($qc) use ($term, $norm) {
-                      $qc->whereRaw("Categoria_ProductoDescripcion_categoria COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
-                         ->orWhereRaw("Categoria_ProductoDescripcion_categoria COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"]);
-                  });
+            $query->where(function ($q) use ($term, $norm, $isPgsql) {
+                if ($isPgsql) {
+                    $q->where('ProductoNombre', 'ILIKE', "%{$term}%")
+                      ->orWhere('ProductoNombre', 'ILIKE', "%{$norm}%")
+                      ->orWhere('ProductoId', 'like', "%{$term}%")
+                      ->orWhere('ProductoMarca', 'ILIKE', "%{$term}%")
+                      ->orWhere('ProductoMarca', 'ILIKE', "%{$norm}%")
+                      ->orWhereHas('categoria', function ($qc) use ($term, $norm) {
+                          $qc->where('Categoria_ProductoDescripcion_categoria', 'ILIKE', "%{$term}%")
+                             ->orWhere('Categoria_ProductoDescripcion_categoria', 'ILIKE', "%{$norm}%");
+                      });
+                } else {
+                    $q->whereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
+                      ->orWhereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"])
+                      ->orWhere('ProductoId', 'like', "%{$term}%")
+                      ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
+                      ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"])
+                      ->orWhereHas('categoria', function ($qc) use ($term, $norm) {
+                          $qc->whereRaw("Categoria_ProductoDescripcion_categoria COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
+                             ->orWhereRaw("Categoria_ProductoDescripcion_categoria COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"]);
+                      });
+                }
             });
         }
 

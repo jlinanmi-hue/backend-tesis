@@ -36,7 +36,7 @@ class DespachoService
     {
         $query = DB::table('Pedido as p')
             ->join('Cliente as c', 'p.Pedido_ClienteId', '=', 'c.ClienteId')
-            ->leftJoin('Canal_Pedido as cp', 'p.Pedido_canal_pedidoId', '=', 'cp.Canal_pedidoId')
+            ->leftJoin('Canal_pedido as cp', 'p.Pedido_canal_pedidoId', '=', 'cp.Canal_pedidoId')
             ->where('p.PedidoEliminado', 'N')
             ->whereIn('p.PedidoEstado_pedido', ['P', 'C', 'A'])
             // Excluir cotizaciones
@@ -48,13 +48,13 @@ class DespachoService
                 'p.PedidoId',
                 'p.PedidoEstado_pedido as PedidoEstado',
                 DB::raw("
-                    COALESCE(p.PedidoEstadoDespacho,
+                    COALESCE(p.\"PedidoEstadoDespacho\",
                         CASE 
-                            WHEN p.PedidoEstado_pedido = 'C' THEN 'ENTREGADO_COMPLETO'
-                            WHEN p.PedidoEstado_pedido = 'A' THEN 'RECHAZADO'
+                            WHEN p.\"PedidoEstado_pedido\" = 'C' THEN 'ENTREGADO_COMPLETO'
+                            WHEN p.\"PedidoEstado_pedido\" = 'A' THEN 'RECHAZADO'
                             ELSE 'PENDIENTE_DESPACHO'
                         END
-                    ) as PedidoEstadoDespacho
+                    ) as \"PedidoEstadoDespacho\"
                 "),
                 'p.PedidoTieneFaltante',
                 'p.PedidoTotal',
@@ -106,10 +106,10 @@ class DespachoService
 
         return $query->orderByRaw("
             CASE 
-                WHEN p.PedidoEstadoDespacho = 'EN_PREPARACION' THEN 1
-                WHEN p.PedidoEstadoDespacho IN ('PENDIENTE', 'PENDIENTE_DESPACHO') THEN 2
+                WHEN p.\"PedidoEstadoDespacho\" = 'EN_PREPARACION' THEN 1
+                WHEN p.\"PedidoEstadoDespacho\" IN ('PENDIENTE', 'PENDIENTE_DESPACHO') THEN 2
                 ELSE 3
-            END, p.PedidoFecha_pedido DESC
+            END, p.\"PedidoFecha_pedido\" DESC
         ")->paginate($perPage);
     }
 
@@ -128,7 +128,7 @@ class DespachoService
         // Cabecera del pedido con datos del cliente y canal (JOIN manual)
         $pedido = DB::table('Pedido as p')
             ->join('Cliente as c', 'p.Pedido_ClienteId', '=', 'c.ClienteId')
-            ->leftJoin('Canal_Pedido as cp', 'p.Pedido_canal_pedidoId', '=', 'cp.Canal_pedidoId')
+            ->leftJoin('Canal_pedido as cp', 'p.Pedido_canal_pedidoId', '=', 'cp.Canal_pedidoId')
             ->where('p.PedidoId', $pedidoId)
             ->select(
                 'p.PedidoId',
@@ -161,7 +161,7 @@ class DespachoService
         // Ítems del pedido con stock actual (JOIN manual: Detalle + Producto + Unidades_Medida)
         $items = DB::table('Detalle_Pedido_Productos as dpp')
             ->join('Producto as prod', 'dpp.Detalle_Pedido_Productos_ProductoId', '=', 'prod.ProductoId')
-            ->leftJoin('Unidades_Medida as um', 'dpp.Detalle_Pedido_Productos_unidades_medidaId', '=', 'um.unidades_medidaId')
+            ->leftJoin('unidades_medida as um', 'dpp.Detalle_Pedido_Productos_unidades_medidaId', '=', 'um.unidades_medidaId')
             ->where('dpp.Detalle_Pedido_Productos_PedidoId', $pedidoId)
             ->where('dpp.Detalle_Pedido_ProductosEliminado', 'N')
             ->select(
@@ -533,12 +533,12 @@ class DespachoService
                   ->orWhere('PedidoAcuerdo_Comercial', 'not like', '%Cotizaci%');
             })
             ->selectRaw("
-                COUNT(CASE WHEN (PedidoEstadoDespacho IN ('PENDIENTE', 'PENDIENTE_DESPACHO') OR (PedidoEstadoDespacho IS NULL AND PedidoEstado_pedido = 'P')) THEN 1 END) as pendientes,
-                COUNT(CASE WHEN PedidoEstadoDespacho = 'EN_PREPARACION' THEN 1 END) as en_preparacion,
-                COUNT(CASE WHEN PedidoEstadoDespacho IN ('ENTREGADO_COMPLETO', 'ENTREGADO_CON_FALTANTE')
-                           AND CAST(PedidoFechaFinDespacho AS DATE) = ? THEN 1 END) as despachados_hoy,
-                COUNT(CASE WHEN PedidoEstadoDespacho = 'ENTREGADO_CON_FALTANTE'
-                           AND CAST(PedidoFechaFinDespacho AS DATE) = ? THEN 1 END) as con_faltante_hoy
+                COUNT(CASE WHEN (\"PedidoEstadoDespacho\" IN ('PENDIENTE', 'PENDIENTE_DESPACHO') OR (\"PedidoEstadoDespacho\" IS NULL AND \"PedidoEstado_pedido\" = 'P')) THEN 1 END) as pendientes,
+                COUNT(CASE WHEN \"PedidoEstadoDespacho\" = 'EN_PREPARACION' THEN 1 END) as en_preparacion,
+                COUNT(CASE WHEN \"PedidoEstadoDespacho\" IN ('ENTREGADO_COMPLETO', 'ENTREGADO_CON_FALTANTE')
+                           AND CAST(\"PedidoFechaFinDespacho\" AS DATE) = ? THEN 1 END) as despachados_hoy,
+                COUNT(CASE WHEN \"PedidoEstadoDespacho\" = 'ENTREGADO_CON_FALTANTE'
+                           AND CAST(\"PedidoFechaFinDespacho\" AS DATE) = ? THEN 1 END) as con_faltante_hoy
             ", [$hoy, $hoy])
             ->first();
 

@@ -14,7 +14,13 @@ class DetalleProductoMedidaSeeder extends Seeder
     public function run(): void
     {
         // Desactivar restricciones de claves foráneas temporalmente
-        DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT all"');
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT all"');
+        } elseif (DB::getDriverName() === 'pgsql') {
+            try {
+            DB::statement("SET session_replication_role = 'replica';");
+        } catch (\Throwable $e) {}
+        }
 
         // Limpiar tabla antes de poblar
         DB::table('Detalle_Producto_medida')->delete();

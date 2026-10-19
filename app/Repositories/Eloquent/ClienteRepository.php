@@ -251,7 +251,7 @@ class ClienteRepository implements ClienteRepositoryInterface
         $last = DB::table('Cliente')
             ->select('ClienteId')
             ->where('ClienteId', 'like', 'CLI-%')
-            ->orderByRaw('LEN(ClienteId) DESC, ClienteId DESC')
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("ClienteId", \'\'))) DESC, "ClienteId" DESC')
             ->first();
 
         if (!$last) {

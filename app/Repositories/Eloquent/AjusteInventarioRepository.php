@@ -95,7 +95,7 @@ class AjusteInventarioRepository implements AjusteInventarioRepositoryInterface
         $last = DB::table('Ajuste_inventario')
             ->select('Ajuste_inventario_id')
             ->where('Ajuste_inventario_id', 'like', 'AJU-%')
-            ->orderByRaw('LEN(Ajuste_inventario_id) DESC, Ajuste_inventario_id DESC')
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("Ajuste_inventario_id", \'\'))) DESC, "Ajuste_inventario_id" DESC')
             ->first();
 
         if (!$last) {
@@ -116,7 +116,7 @@ class AjusteInventarioRepository implements AjusteInventarioRepositoryInterface
         $totalUnidades = (float) ((clone $baseQuery)->sum('Ajuste_inventario_cantidad') ?? 0);
 
         $porTipo = (clone $baseQuery)
-            ->select('Ajuste_inventario_tipo as tipo', DB::raw('COUNT(*) as total_registros'), DB::raw('SUM(Ajuste_inventario_cantidad) as total_unidades'))
+            ->select('Ajuste_inventario_tipo as tipo', DB::raw('COUNT(*) as total_registros'), DB::raw('SUM("Ajuste_inventario_cantidad") as total_unidades'))
             ->groupBy('Ajuste_inventario_tipo')
             ->get();
 

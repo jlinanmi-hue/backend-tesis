@@ -11,6 +11,7 @@ use Exception;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class AjusteInventarioService
@@ -238,6 +239,13 @@ class AjusteInventarioService
             $producto->update(array_merge([
                 'ProductoStockActual' => (string) $nuevoStock,
             ], $auditProducto));
+
+            // Evaluar alerta inteligente de stock tras ajuste/merma
+            try {
+                app(\App\Services\StockAlertService::class)->evaluar($producto->fresh());
+            } catch (\Throwable $e) {
+                Log::warning("StockAlert AjusteInventarioService error en {$producto->ProductoId}: {$e->getMessage()}");
+            }
 
             // 4. Generar ID y registrar Ajuste_inventario
             $ajusteId = $this->ajusteRepository->getNextId();

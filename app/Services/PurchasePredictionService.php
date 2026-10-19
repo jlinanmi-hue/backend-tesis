@@ -443,7 +443,7 @@ class PurchasePredictionService
                   ->on('dpm.Detalle_Producto_medida_unidades_medidaId', '=', 'doc.Detalle_UnidadMedidaId')
                   ->where('dpm.Detalle_Producto_medidaEliminado', '=', 'N');
             })
-            ->selectRaw('SUM(doc.Detalle_Orden_CompraCantidad * ISNULL(NULLIF(dpm.Detalle_Producto_medida_factor_conversion, 0), 1)) as total_base')
+            ->selectRaw('SUM(doc."Detalle_Orden_CompraCantidad" * COALESCE(NULLIF(dpm."Detalle_Producto_medida_factor_conversion", 0), 1)) as total_base')
             ->value('total_base');
 
         return (float)($enTransito ?? 0);
@@ -487,9 +487,9 @@ class PurchasePredictionService
             ->whereIn('oc.Orden_CompraEstado', ['C', 'P']) // Completadas y en tránsito
             ->where('oc.Orden_CompraFecha', '>=', $hace4Semanas->toDateTimeString())
             ->selectRaw('
-                doc.Detalle_Orden_CompraCantidad,
-                doc.Detalle_Orden_CompraPrecioUnitario,
-                ISNULL(NULLIF(dpm.Detalle_Producto_medida_factor_conversion, 0), 1) as factor
+                doc."Detalle_Orden_CompraCantidad",
+                doc."Detalle_Orden_CompraPrecioUnitario",
+                COALESCE(NULLIF(dpm."Detalle_Producto_medida_factor_conversion", 0), 1) as factor
             ')
             ->get();
 

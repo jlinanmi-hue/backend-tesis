@@ -20,6 +20,8 @@ class UpdatePedidoRequest extends FormRequest
             'PedidoAcuerdo_Comercial' => 'nullable|string|max:45',
             'canal_id' => 'nullable|string|exists:Canal_pedido,Canal_pedidoId',
             'Pedido_canal_pedidoId' => 'nullable|string|exists:Canal_pedido,Canal_pedidoId',
+            'cliente_id' => 'nullable|string|exists:Cliente,ClienteId',
+            'Pedido_ClienteId' => 'nullable|string|exists:Cliente,ClienteId',
             'fecha_entrega' => 'nullable|date',
             'PedidoFechaEntrega' => 'nullable|date',
             'es_delivery' => 'nullable',

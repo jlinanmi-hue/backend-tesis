@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\Producto;
 use Exception;
 use Illuminate\Support\Facades\Config;
 use Illuminate\Support\Facades\Http;
@@ -275,7 +276,7 @@ class GeminiService
     /**
      * Catálogo de declaraciones de Tools de Valencia AI (con soporte para modo solo lectura y filtrado inteligente).
      */
-    public function getRegisteredTools(bool $readOnly = false, ?string $userQuery = null): array
+    public function getRegisteredTools(bool $readOnly = false, ?string $userQuery = null, ?string $context = null): array
     {
         $tools = [
             [
@@ -329,6 +330,13 @@ class GeminiService
                             'telefono'  => ['type' => 'STRING', 'description' => 'Telefono o celular a precargar'],
                             'direccion' => ['type' => 'STRING', 'description' => 'Direccion fiscal o comercial a precargar'],
                         ],
+                    ]],
+                    ['name' => 'consultar_ruc', 'description' => 'Consulta datos oficiales de RUC o DNI en SUNAT/RENIEC (razón social, estado, condición, dirección fiscal). Usar cuando el cliente solicita expresamente consultar un RUC o DNI.', 'parameters' => [
+                        'type' => 'OBJECT',
+                        'properties' => [
+                            'ruc' => ['type' => 'STRING', 'description' => 'Número de RUC (11 dígitos) o DNI (8 dígitos) a consultar'],
+                        ],
+                        'required' => ['ruc'],
                     ]],
                     // === MODULO 3: PRODUCTOS ===
                     ['name' => 'crear_producto', 'description' => 'Registra un nuevo producto en el catalogo. Requiere nombre y categoria_id.', 'parameters' => ['type' => 'OBJECT', 'properties' => ['nombre' => ['type' => 'STRING', 'description' => 'Nombre del producto'], 'categoria_id' => ['type' => 'STRING', 'description' => 'ID de la categoria'], 'precio_unitario' => ['type' => 'NUMBER', 'description' => 'Precio unitario de venta'], 'stock_minimo' => ['type' => 'NUMBER', 'description' => 'Stock minimo de alerta'], 'descripcion' => ['type' => 'STRING', 'description' => 'Descripcion del producto']], 'required' => ['nombre', 'categoria_id']]],
@@ -494,6 +502,15 @@ class GeminiService
             ],
         ];
 
+        if ($context === 'whatsapp') {
+            $allowed = GeminiToolsService::WHATSAPP_ALLOWED_TOOLS;
+            $tools[0]['functionDeclarations'] = array_values(array_filter(
+                $tools[0]['functionDeclarations'],
+                fn ($t) => in_array($t['name'], $allowed, true)
+            ));
+            return $tools;
+        }
+
         if ($readOnly) {
             $tools[0]['functionDeclarations'] = array_values(array_filter(
                 $tools[0]['functionDeclarations'],
@@ -509,6 +526,14 @@ class GeminiService
         }
 
         return $tools;
+    }
+
+    /**
+     * Retorna únicamente las 11 herramientas autorizadas para el bot de WhatsApp.
+     */
+    public function getWhatsAppTools(): array
+    {
+        return $this->getRegisteredTools(false, null, 'whatsapp');
     }
 
     /**
@@ -1097,4 +1122,62 @@ class GeminiService
 
         throw $lastException ?: new Exception('No se pudo transcribir el audio con ninguno de los modelos disponibles.');
     }
+
+    /**
+     * Genera un mensaje conciso y profesional de alerta de stock usando IA (Gemini) o plantilla fallback.
+     *
+     * @param Producto $producto
+     * @param float $stockActual
+     * @param float $cantidadSugerida
+     * @param string $zona 'QUIEBRE'|'ALERTA'
+     * @return string
+     */
+    public function generarMensajeAlertaStock(Producto $producto, float $stockActual, float $cantidadSugerida, string $zona): string
+    {
+        $nombre = $producto->ProductoNombre ?? 'Producto';
+        $minimo = $producto->ProductoStockMinimo ?? 0;
+
+        // Plantilla determinista de respaldo inmediato
+        $fallback = match (strtoupper($zona)) {
+            'QUIEBRE' => "Stock agotado (0 unidades) para '{$nombre}'. Se requiere reposición urgente de {$cantidadSugerida} unidades.",
+            default   => "Stock crítico en '{$nombre}': quedan {$stockActual} unidades (mínimo de seguridad: {$minimo}). Se sugiere reponer {$cantidadSugerida} unidades.",
+        };
+
+        try {
+            $prompt = <<<PROMPT
+Actúa como analista logístico de Comercial Valencia. Redacta una notificación de alerta de inventario concisa (máximo 1 o 2 oraciones, directa, sin saludos ni despedidas) para el Jefe de Tienda y Logística.
+Datos del producto:
+- Producto: {$nombre}
+- Stock actual: {$stockActual}
+- Stock mínimo de seguridad: {$minimo}
+- Nivel de alerta: {$zona}
+- Cantidad sugerida a ordenar (EOQ): {$cantidadSugerida}
+
+Instrucciones:
+- Sé directo, profesional y claro sobre la urgencia y la cantidad sugerida para emitir la orden de compra.
+- Responde únicamente con el texto de la alerta.
+PROMPT;
+
+            $response = $this->generateContent(
+                contents: $prompt,
+                systemInstruction: 'Eres un asistente logístico de inventarios de Comercial Valencia. Genera avisos concisos, directos y profesionales.',
+                tools: [],
+                generationConfig: [
+                    'temperature' => 0.2,
+                    'maxOutputTokens' => 120,
+                ],
+                customTimeout: 3
+            );
+
+            $text = trim($response['text'] ?? '');
+            if (!empty($text)) {
+                return $text;
+            }
+        } catch (\Throwable $e) {
+            Log::info("GeminiService::generarMensajeAlertaStock fallback usado: {$e->getMessage()}");
+        }
+
+        return $fallback;
+    }
 }
+

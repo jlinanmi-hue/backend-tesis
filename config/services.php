@@ -67,4 +67,12 @@ return [
         'path' => env('PYTHON_PATH', 'C:\\laragon\\bin\\python\\python-3.13\\python.exe'),
     ],
 
+    'whatsapp' => [
+        'webhook_token' => env('WHATSAPP_WEBHOOK_TOKEN', 'valencia_wsp_secret_2026'),
+        'audit_user'    => env('WHATSAPP_AUDIT_USER', 'WHATSAPP_BOT'),
+        'audit_host'    => env('WHATSAPP_AUDIT_HOST', 'WHATSAPP_N8N'),
+        'canal_id'      => env('WHATSAPP_CANAL_ID', 'CNL-00003'),
+    ],
+
 ];
+

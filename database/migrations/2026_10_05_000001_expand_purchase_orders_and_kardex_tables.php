@@ -16,32 +16,41 @@ return new class extends Migration
         // 1. TABLA: Orden_Compra
         // =========================================================================
         if (Schema::hasTable('Orden_Compra')) {
-            // Paso 0: Sanitizar cualquier valor NULL antes de alterar (sigue siendo CHAR(1))
-            DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'P' WHERE Orden_CompraEstado IS NULL");
+            if (DB::getDriverName() === 'sqlsrv') {
+                // Paso 0: Sanitizar cualquier valor NULL antes de alterar (sigue siendo CHAR(1))
+                DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'P' WHERE Orden_CompraEstado IS NULL");
 
-            // Paso 1: Eliminar DEFAULT constraint dinámicamente en SQL Server
-            $constraint = DB::selectOne("
-                SELECT dc.name AS constraint_name
-                FROM sys.default_constraints dc
-                INNER JOIN sys.columns c ON c.default_object_id = dc.object_id
-                INNER JOIN sys.tables t ON t.object_id = c.object_id
-                WHERE t.name = 'Orden_Compra' AND c.name = 'Orden_CompraEstado'
-            ");
+                // Paso 1: Eliminar DEFAULT constraint dinámicamente en SQL Server
+                $constraint = DB::selectOne("
+                    SELECT dc.name AS constraint_name
+                    FROM sys.default_constraints dc
+                    INNER JOIN sys.columns c ON c.default_object_id = dc.object_id
+                    INNER JOIN sys.tables t ON t.object_id = c.object_id
+                    WHERE t.name = 'Orden_Compra' AND c.name = 'Orden_CompraEstado'
+                ");
 
-            if ($constraint) {
-                DB::statement("ALTER TABLE Orden_Compra DROP CONSTRAINT [{$constraint->constraint_name}]");
+                if ($constraint) {
+                    DB::statement("ALTER TABLE Orden_Compra DROP CONSTRAINT [{$constraint->constraint_name}]");
+                }
+
+                // Paso 2: Alterar columna de CHAR(1) a VARCHAR(30) NOT NULL para que soporte cadenas largas
+                DB::statement("ALTER TABLE Orden_Compra ALTER COLUMN Orden_CompraEstado VARCHAR(30) NOT NULL");
+
+                // Paso 3: Ahora que es VARCHAR(30), migrar valores legacy existentes
+                DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'PENDIENTE_RECEPCION' WHERE Orden_CompraEstado = 'P'");
+                DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'CERRADA' WHERE Orden_CompraEstado = 'C'");
+                DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'ANULADA' WHERE Orden_CompraEstado = 'A'");
+
+                // Paso 4: Reasignar default constraint para nuevos registros
+                DB::statement("ALTER TABLE Orden_Compra ADD CONSTRAINT DF_Orden_Compra_Estado DEFAULT 'BORRADOR' FOR Orden_CompraEstado");
+            } else {
+                DB::table('Orden_Compra')->whereNull('Orden_CompraEstado')->update(['Orden_CompraEstado' => 'P']);
+                DB::statement('ALTER TABLE "Orden_Compra" ALTER COLUMN "Orden_CompraEstado" TYPE VARCHAR(30)');
+                DB::table('Orden_Compra')->where('Orden_CompraEstado', 'P')->update(['Orden_CompraEstado' => 'PENDIENTE_RECEPCION']);
+                DB::table('Orden_Compra')->where('Orden_CompraEstado', 'C')->update(['Orden_CompraEstado' => 'CERRADA']);
+                DB::table('Orden_Compra')->where('Orden_CompraEstado', 'A')->update(['Orden_CompraEstado' => 'ANULADA']);
+                DB::statement('ALTER TABLE "Orden_Compra" ALTER COLUMN "Orden_CompraEstado" SET DEFAULT \'BORRADOR\'');
             }
-
-            // Paso 2: Alterar columna de CHAR(1) a VARCHAR(30) NOT NULL para que soporte cadenas largas
-            DB::statement("ALTER TABLE Orden_Compra ALTER COLUMN Orden_CompraEstado VARCHAR(30) NOT NULL");
-
-            // Paso 3: Ahora que es VARCHAR(30), migrar valores legacy existentes
-            DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'PENDIENTE_RECEPCION' WHERE Orden_CompraEstado = 'P'");
-            DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'CERRADA' WHERE Orden_CompraEstado = 'C'");
-            DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'ANULADA' WHERE Orden_CompraEstado = 'A'");
-
-            // Paso 4: Reasignar default constraint para nuevos registros
-            DB::statement("ALTER TABLE Orden_Compra ADD CONSTRAINT DF_Orden_Compra_Estado DEFAULT 'BORRADOR' FOR Orden_CompraEstado");
 
             // Paso 5: Ampliación de columnas adicionales en Orden_Compra
             Schema::table('Orden_Compra', function (Blueprint $table) {
@@ -120,13 +129,20 @@ return new class extends Migration
             });
 
             // Paso 6: Backfill de subtipos históricos en Movimiento_producto para soporte completo de Kárdex
-            DB::statement("UPDATE Movimiento_producto SET Movimiento_productoSubtipo = 'DEVOLUCION_CLIENTE' WHERE Movimiento_productoDocumentoOperacionId LIKE 'DEV-PED-%' AND Movimiento_productoSubtipo IS NULL");
-            DB::statement("UPDATE Movimiento_producto SET Movimiento_productoSubtipo = 'AJUSTE_MANUAL' WHERE (Movimiento_productoDocumentoOperacionId LIKE 'AJU-%' OR Movimiento_productoDocumentoOperacionId LIKE 'AJUSTE-%' OR Movimiento_productoDocumentoOperacionId LIKE 'AUDIT-%') AND Movimiento_productoSubtipo IS NULL");
-            DB::statement("UPDATE Movimiento_producto SET Movimiento_productoSubtipo = 'ANULACION_RECEPCION' WHERE (Movimiento_productoDocumentoOperacionId LIKE 'ANUL-%' OR Movimiento_productoDocumentoOperacionId LIKE 'REV-%') AND Movimiento_productoSubtipo IS NULL");
-            DB::statement("UPDATE Movimiento_producto SET Movimiento_productoSubtipo = 'RECEPCION_OC' WHERE Movimiento_productoDocumentoOperacionId LIKE 'OC-%' AND Movimiento_productoSubtipo IS NULL");
-            DB::statement("UPDATE Movimiento_producto SET Movimiento_productoSubtipo = 'VENTA_PEDIDO' WHERE Movimiento_productoDocumentoOperacionId LIKE 'PED-%' AND Movimiento_productoSubtipo IS NULL");
-            DB::statement("UPDATE Movimiento_producto SET Movimiento_productoSubtipo = 'INVENTARIO_INICIAL' WHERE Movimiento_productoDocumentoOperacionId LIKE 'INV-INICIAL%' AND Movimiento_productoSubtipo IS NULL");
-            DB::statement("UPDATE Movimiento_producto SET Movimiento_productoSubtipo = 'RECEPCION_OC' WHERE Movimiento_productoSubtipo IS NULL AND Movimiento_productoTipoMovimiento = 'E'");
+            DB::table('Movimiento_producto')->where('Movimiento_productoDocumentoOperacionId', 'LIKE', 'DEV-PED-%')->whereNull('Movimiento_productoSubtipo')->update(['Movimiento_productoSubtipo' => 'DEVOLUCION_CLIENTE']);
+            DB::table('Movimiento_producto')->where(function ($q) {
+                $q->where('Movimiento_productoDocumentoOperacionId', 'LIKE', 'AJU-%')
+                  ->orWhere('Movimiento_productoDocumentoOperacionId', 'LIKE', 'AJUSTE-%')
+                  ->orWhere('Movimiento_productoDocumentoOperacionId', 'LIKE', 'AUDIT-%');
+            })->whereNull('Movimiento_productoSubtipo')->update(['Movimiento_productoSubtipo' => 'AJUSTE_MANUAL']);
+            DB::table('Movimiento_producto')->where(function ($q) {
+                $q->where('Movimiento_productoDocumentoOperacionId', 'LIKE', 'ANUL-%')
+                  ->orWhere('Movimiento_productoDocumentoOperacionId', 'LIKE', 'REV-%');
+            })->whereNull('Movimiento_productoSubtipo')->update(['Movimiento_productoSubtipo' => 'ANULACION_RECEPCION']);
+            DB::table('Movimiento_producto')->where('Movimiento_productoDocumentoOperacionId', 'LIKE', 'OC-%')->whereNull('Movimiento_productoSubtipo')->update(['Movimiento_productoSubtipo' => 'RECEPCION_OC']);
+            DB::table('Movimiento_producto')->where('Movimiento_productoDocumentoOperacionId', 'LIKE', 'PED-%')->whereNull('Movimiento_productoSubtipo')->update(['Movimiento_productoSubtipo' => 'VENTA_PEDIDO']);
+            DB::table('Movimiento_producto')->where('Movimiento_productoDocumentoOperacionId', 'LIKE', 'INV-INICIAL%')->whereNull('Movimiento_productoSubtipo')->update(['Movimiento_productoSubtipo' => 'INVENTARIO_INICIAL']);
+            DB::table('Movimiento_producto')->whereNull('Movimiento_productoSubtipo')->where('Movimiento_productoTipoMovimiento', 'E')->update(['Movimiento_productoSubtipo' => 'RECEPCION_OC']);
         }
     }
 
@@ -195,25 +211,33 @@ return new class extends Migration
             });
 
             // Revertir estados a legacy ('P', 'C', 'A')
-            DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'P' WHERE Orden_CompraEstado IN ('BORRADOR', 'ENVIADA', 'PENDIENTE_RECEPCION', 'EN_RECEPCION')");
-            DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'C' WHERE Orden_CompraEstado IN ('CERRADA', 'CERRADA_CON_FALTANTE')");
-            DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'A' WHERE Orden_CompraEstado IN ('ANULADA', 'CANCELADA_PROVEEDOR')");
+            if (DB::getDriverName() === 'sqlsrv') {
+                DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'P' WHERE Orden_CompraEstado IN ('BORRADOR', 'ENVIADA', 'PENDIENTE_RECEPCION', 'EN_RECEPCION')");
+                DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'C' WHERE Orden_CompraEstado IN ('CERRADA', 'CERRADA_CON_FALTANTE')");
+                DB::statement("UPDATE Orden_Compra SET Orden_CompraEstado = 'A' WHERE Orden_CompraEstado IN ('ANULADA', 'CANCELADA_PROVEEDOR')");
 
-            // Eliminar default constraint DF_Orden_Compra_Estado si existe
-            $constraint = DB::selectOne("
-                SELECT dc.name AS constraint_name
-                FROM sys.default_constraints dc
-                INNER JOIN sys.columns c ON c.default_object_id = dc.object_id
-                INNER JOIN sys.tables t ON t.object_id = c.object_id
-                WHERE t.name = 'Orden_Compra' AND c.name = 'Orden_CompraEstado'
-            ");
-            if ($constraint) {
-                DB::statement("ALTER TABLE Orden_Compra DROP CONSTRAINT [{$constraint->constraint_name}]");
+                // Eliminar default constraint DF_Orden_Compra_Estado si existe
+                $constraint = DB::selectOne("
+                    SELECT dc.name AS constraint_name
+                    FROM sys.default_constraints dc
+                    INNER JOIN sys.columns c ON c.default_object_id = dc.object_id
+                    INNER JOIN sys.tables t ON t.object_id = c.object_id
+                    WHERE t.name = 'Orden_Compra' AND c.name = 'Orden_CompraEstado'
+                ");
+                if ($constraint) {
+                    DB::statement("ALTER TABLE Orden_Compra DROP CONSTRAINT [{$constraint->constraint_name}]");
+                }
+
+                // Regresar a CHAR(1)
+                DB::statement("ALTER TABLE Orden_Compra ALTER COLUMN Orden_CompraEstado CHAR(1) NOT NULL");
+                DB::statement("ALTER TABLE Orden_Compra ADD CONSTRAINT DF_Orden_Compra_Estado_Legacy DEFAULT 'P' FOR Orden_CompraEstado");
+            } else {
+                DB::table('Orden_Compra')->whereIn('Orden_CompraEstado', ['BORRADOR', 'ENVIADA', 'PENDIENTE_RECEPCION', 'EN_RECEPCION'])->update(['Orden_CompraEstado' => 'P']);
+                DB::table('Orden_Compra')->whereIn('Orden_CompraEstado', ['CERRADA', 'CERRADA_CON_FALTANTE'])->update(['Orden_CompraEstado' => 'C']);
+                DB::table('Orden_Compra')->whereIn('Orden_CompraEstado', ['ANULADA', 'CANCELADA_PROVEEDOR'])->update(['Orden_CompraEstado' => 'A']);
+                DB::statement('ALTER TABLE "Orden_Compra" ALTER COLUMN "Orden_CompraEstado" TYPE CHAR(1)');
+                DB::statement('ALTER TABLE "Orden_Compra" ALTER COLUMN "Orden_CompraEstado" SET DEFAULT \'P\'');
             }
-
-            // Regresar a CHAR(1)
-            DB::statement("ALTER TABLE Orden_Compra ALTER COLUMN Orden_CompraEstado CHAR(1) NOT NULL");
-            DB::statement("ALTER TABLE Orden_Compra ADD CONSTRAINT DF_Orden_Compra_Estado_Legacy DEFAULT 'P' FOR Orden_CompraEstado");
         }
     }
 };

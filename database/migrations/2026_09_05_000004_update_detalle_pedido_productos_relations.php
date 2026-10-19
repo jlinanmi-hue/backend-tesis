@@ -18,8 +18,11 @@ return new class extends Migration
         });
 
         // 2. Renombrar la columna o recrearla hacia Detalle_Pedido_Productos_ProductoId y eliminar id_unidad_detalle
-        // Usamos sp_rename para SQL Server para preservar datos si existieran
-        DB::statement("EXEC sp_rename 'Detalle_Pedido_Productos.Detalle_Pedido_Productos_id_producto_detalle', 'Detalle_Pedido_Productos_ProductoId', 'COLUMN'");
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement("EXEC sp_rename 'Detalle_Pedido_Productos.Detalle_Pedido_Productos_id_producto_detalle', 'Detalle_Pedido_Productos_ProductoId', 'COLUMN'");
+        } else {
+            DB::statement('ALTER TABLE "Detalle_Pedido_Productos" RENAME COLUMN "Detalle_Pedido_Productos_id_producto_detalle" TO "Detalle_Pedido_Productos_ProductoId"');
+        }
 
         Schema::table('Detalle_Pedido_Productos', function (Blueprint $table) {
             $table->dropColumn('Detalle_Pedido_Productos_id_unidad_detalle');
@@ -43,7 +46,11 @@ return new class extends Migration
             $table->string('Detalle_Pedido_Productos_id_unidad_detalle', 20)->nullable();
         });
 
-        DB::statement("EXEC sp_rename 'Detalle_Pedido_Productos.Detalle_Pedido_Productos_ProductoId', 'Detalle_Pedido_Productos_id_producto_detalle', 'COLUMN'");
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement("EXEC sp_rename 'Detalle_Pedido_Productos.Detalle_Pedido_Productos_ProductoId', 'Detalle_Pedido_Productos_id_producto_detalle', 'COLUMN'");
+        } else {
+            DB::statement('ALTER TABLE "Detalle_Pedido_Productos" RENAME COLUMN "Detalle_Pedido_Productos_ProductoId" TO "Detalle_Pedido_Productos_id_producto_detalle"');
+        }
 
         Schema::table('Detalle_Pedido_Productos', function (Blueprint $table) {
             $table->foreign(

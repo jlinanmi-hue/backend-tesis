@@ -358,9 +358,9 @@ class ChartGeneratorService
     {
         $q = $this->baseQuery($f);
         $r = (clone $q)->selectRaw("
-            SUM(CASE WHEN PedidoEstado_pedido = 'C' THEN 1 ELSE 0 END) as comp,
-            SUM(CASE WHEN PedidoEstado_pedido = 'P' THEN 1 ELSE 0 END) as pend,
-            SUM(CASE WHEN PedidoEstado_pedido = 'A' THEN 1 ELSE 0 END) as canc
+            SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN 1 ELSE 0 END) as comp,
+            SUM(CASE WHEN \"PedidoEstado_pedido\" = 'P' THEN 1 ELSE 0 END) as pend,
+            SUM(CASE WHEN \"PedidoEstado_pedido\" = 'A' THEN 1 ELSE 0 END) as canc
         ")->first();
 
         $comp  = (int)($r->comp ?? 0);
@@ -382,9 +382,9 @@ class ChartGeneratorService
     {
         $collection = $this->baseQuery($f)
             ->join('Canal_pedido', 'Canal_pedido.Canal_pedidoId', '=', 'Pedido.Pedido_canal_pedidoId')
-            ->selectRaw('Canal_pedido.Canal_pedidoDescripcion as canal, COUNT(*) as total')
+            ->select('Canal_pedido.Canal_pedidoDescripcion as canal', DB::raw('COUNT(*) as total'))
             ->groupBy('Canal_pedido.Canal_pedidoDescripcion')
-            ->orderByRaw('COUNT(*) DESC')
+            ->orderByDesc('total')
             ->get();
 
         $rows = $collection->map(fn($r) => (array) $r)->toArray();
@@ -408,7 +408,8 @@ class ChartGeneratorService
         $q = DB::table('Pedido')
             ->where('PedidoEliminado', 'N')
             ->where('PedidoEstado_pedido', 'C')
-            ->whereBetween(DB::raw('CAST(PedidoFechaCreacion AS DATE)'), [$f['fecha_desde'], $f['fecha_hasta']]);
+            ->whereDate('PedidoFechaCreacion', '>=', $f['fecha_desde'])
+            ->whereDate('PedidoFechaCreacion', '<=', $f['fecha_hasta']);
 
         if (!empty($f['canal'])) {
             $q->where('Pedido_canal_pedidoId', $f['canal']);
@@ -416,14 +417,14 @@ class ChartGeneratorService
 
         if ($porCanal) {
             $collection = $q->join('Canal_pedido', 'Canal_pedido.Canal_pedidoId', '=', 'Pedido.Pedido_canal_pedidoId')
-                ->selectRaw('Canal_pedido.Canal_pedidoDescripcion as grupo, SUM(PedidoTotal) as monto')
+                ->select('Canal_pedido.Canal_pedidoDescripcion as grupo', DB::raw('SUM("PedidoTotal") as monto'))
                 ->groupBy('Canal_pedido.Canal_pedidoDescripcion')
-                ->orderByRaw('SUM(PedidoTotal) DESC')
+                ->orderByDesc('monto')
                 ->get();
         } else {
-            $collection = $q->selectRaw("CAST(PedidoFechaCreacion AS DATE) as grupo, SUM(PedidoTotal) as monto")
-                ->groupByRaw('CAST(PedidoFechaCreacion AS DATE)')
-                ->orderByRaw('CAST(PedidoFechaCreacion AS DATE)')
+            $collection = $q->select(DB::raw('CAST("PedidoFechaCreacion" AS DATE) as grupo'), DB::raw('SUM("PedidoTotal") as monto'))
+                ->groupBy(DB::raw('CAST("PedidoFechaCreacion" AS DATE)'))
+                ->orderBy('grupo')
                 ->get();
         }
 
@@ -447,10 +448,11 @@ class ChartGeneratorService
         $collection = DB::table('Pedido')
             ->where('PedidoEliminado', 'N')
             ->where('PedidoEstado_pedido', 'C')
-            ->whereBetween(DB::raw('CAST(PedidoFechaCreacion AS DATE)'), [$f['fecha_desde'], $f['fecha_hasta']])
-            ->selectRaw('CAST(PedidoFechaCreacion AS DATE) as fecha, SUM(PedidoTotal) as monto')
-            ->groupByRaw('CAST(PedidoFechaCreacion AS DATE)')
-            ->orderByRaw('CAST(PedidoFechaCreacion AS DATE)')
+            ->whereDate('PedidoFechaCreacion', '>=', $f['fecha_desde'])
+            ->whereDate('PedidoFechaCreacion', '<=', $f['fecha_hasta'])
+            ->select(DB::raw('CAST("PedidoFechaCreacion" AS DATE) as fecha'), DB::raw('SUM("PedidoTotal") as monto'))
+            ->groupBy(DB::raw('CAST("PedidoFechaCreacion" AS DATE)'))
+            ->orderBy('fecha')
             ->get();
 
         $rows = $collection->map(fn($r) => (array) $r)->toArray();
@@ -475,10 +477,11 @@ class ChartGeneratorService
             ->where('Pedido.PedidoEliminado', 'N')
             ->where('Detalle_Pedido_Productos.Detalle_Pedido_ProductosEliminado', 'N')
             ->where('Pedido.PedidoEstado_pedido', 'C')
-            ->whereBetween(DB::raw('CAST(Pedido.PedidoFechaCreacion AS DATE)'), [$f['fecha_desde'], $f['fecha_hasta']])
-            ->selectRaw('Producto.ProductoNombre as producto, SUM(Detalle_Pedido_Productos.Detalle_Pedido_Productos_cantidad) as unidades')
+            ->whereDate('Pedido.PedidoFechaCreacion', '>=', $f['fecha_desde'])
+            ->whereDate('Pedido.PedidoFechaCreacion', '<=', $f['fecha_hasta'])
+            ->select('Producto.ProductoNombre as producto', DB::raw('SUM("Detalle_Pedido_Productos"."Detalle_Pedido_Productos_cantidad") as unidades'))
             ->groupBy('Producto.ProductoNombre')
-            ->orderByRaw('SUM(Detalle_Pedido_Productos.Detalle_Pedido_Productos_cantidad) DESC')
+            ->orderByDesc('unidades')
             ->limit(self::MAX_CHART_ITEMS)
             ->get();
 
@@ -503,10 +506,11 @@ class ChartGeneratorService
             ->join('Cliente', 'Cliente.ClienteId', '=', 'Pedido.Pedido_ClienteId')
             ->where('Pedido.PedidoEliminado', 'N')
             ->where('Pedido.PedidoEstado_pedido', 'C')
-            ->whereBetween(DB::raw('CAST(Pedido.PedidoFechaCreacion AS DATE)'), [$f['fecha_desde'], $f['fecha_hasta']])
-            ->selectRaw('Cliente.ClienteNombre as cliente, COUNT(*) as pedidos, SUM(Pedido.PedidoTotal) as monto')
+            ->whereDate('Pedido.PedidoFechaCreacion', '>=', $f['fecha_desde'])
+            ->whereDate('Pedido.PedidoFechaCreacion', '<=', $f['fecha_hasta'])
+            ->select('Cliente.ClienteNombre as cliente', DB::raw('COUNT(*) as pedidos'), DB::raw('SUM("Pedido"."PedidoTotal") as monto'))
             ->groupBy('Cliente.ClienteNombre')
-            ->orderByRaw('SUM(Pedido.PedidoTotal) DESC')
+            ->orderByDesc('monto')
             ->limit(self::MAX_CHART_ITEMS)
             ->get();
 
@@ -530,9 +534,9 @@ class ChartGeneratorService
         $rows = DB::table('Producto')
             ->where('ProductoEliminado', 'N')
             ->where('ProductoEstado', 'A')
-            ->whereRaw('CAST(ProductoStockActual AS DECIMAL(10,2)) <= CAST(ProductoStockMinimo AS DECIMAL(10,2))')
+            ->whereColumn('ProductoStockActual', '<=', 'ProductoStockMinimo')
             ->select('ProductoNombre as producto', 'ProductoStockActual as stock', 'ProductoStockMinimo as minimo')
-            ->orderByRaw('CAST(ProductoStockActual AS DECIMAL(10,2)) ASC')
+            ->orderBy('ProductoStockActual', 'ASC')
             ->limit(self::MAX_CHART_ITEMS)
             ->get();
 
@@ -555,7 +559,7 @@ class ChartGeneratorService
     {
         $collection = $this->baseQuery($f)
             ->where('PedidoTieneError', 'S')
-            ->selectRaw("COALESCE(PedidoTipoError, 'Sin clasificar') as tipo, COUNT(*) as total")
+            ->selectRaw("COALESCE(\"PedidoTipoError\", 'Sin clasificar') as tipo, COUNT(*) as total")
             ->groupBy('PedidoTipoError')
             ->orderByRaw('COUNT(*) DESC')
             ->get();
@@ -590,8 +594,8 @@ class ChartGeneratorService
             ->join('Categoria_Producto', 'Categoria_Producto.Categoria_ProductoId', '=', 'Producto.Producto_Categoria_ProductoId')
             ->where('Producto.ProductoEliminado', 'N')
             ->where('Producto.ProductoEstado', 'A')
-            ->whereRaw('CAST(Producto.ProductoStockActual AS DECIMAL(10,2)) = 0')
-            ->selectRaw('Categoria_Producto.Categoria_ProductoDescripcion_categoria as categoria, COUNT(*) as roturas')
+            ->where('Producto.ProductoStockActual', '<=', 0)
+            ->select('Categoria_Producto.Categoria_ProductoDescripcion_categoria as categoria', DB::raw('COUNT(*) as roturas'))
             ->groupBy('Categoria_Producto.Categoria_ProductoDescripcion_categoria')
             ->orderByRaw('COUNT(*) DESC')
             ->get();
@@ -650,9 +654,16 @@ class ChartGeneratorService
             ->join('Canal_pedido', 'Canal_pedido.Canal_pedidoId', '=', 'Pedido.Pedido_canal_pedidoId')
             ->where('Pedido.PedidoEliminado', 'N')
             ->when(!empty($f['estado']), fn($q) => $q->where('PedidoEstado_pedido', $f['estado']))
-            ->when(!empty($f['fecha_desde']), fn($q) => $q->whereRaw('CAST(PedidoFechaCreacion AS DATE) >= ?', [$f['fecha_desde']]))
-            ->when(!empty($f['fecha_hasta']), fn($q) => $q->whereRaw('CAST(PedidoFechaCreacion AS DATE) <= ?', [$f['fecha_hasta']]))
-            ->selectRaw('Pedido.PedidoId, Cliente.ClienteNombre, Canal_pedido.Canal_pedidoDescripcion as canal, Pedido.PedidoTotal, Pedido.PedidoEstado_pedido, CAST(Pedido.PedidoFechaCreacion AS DATE) as fecha')
+            ->when(!empty($f['fecha_desde']), fn($q) => $q->whereDate('Pedido.PedidoFechaCreacion', '>=', $f['fecha_desde']))
+            ->when(!empty($f['fecha_hasta']), fn($q) => $q->whereDate('Pedido.PedidoFechaCreacion', '<=', $f['fecha_hasta']))
+            ->select(
+                'Pedido.PedidoId',
+                'Cliente.ClienteNombre',
+                'Canal_pedido.Canal_pedidoDescripcion as canal',
+                'Pedido.PedidoTotal',
+                'Pedido.PedidoEstado_pedido',
+                DB::raw('CAST("Pedido"."PedidoFechaCreacion" AS DATE) as fecha')
+            )
             ->orderByDesc('Pedido.PedidoFechaCreacion')
             ->limit($n)
             ->get()
@@ -678,8 +689,15 @@ class ChartGeneratorService
             })
             ->where('Producto.ProductoEliminado', 'N')
             ->when(!empty($f['categoria']), fn($q) => $q->where('Producto.Producto_Categoria_ProductoId', $f['categoria']))
-            ->selectRaw('Producto.ProductoId, Producto.ProductoNombre, Categoria_Producto.Categoria_ProductoDescripcion_categoria as categoria, Producto.ProductoStockActual as stock, Producto.ProductoStockMinimo as minimo, COALESCE(Detalle_Producto_medida.Detalle_Producto_medida_precio_venta, 0) as precio')
-            ->orderByRaw('CAST(Producto.ProductoStockActual AS DECIMAL(10,2)) ASC')
+            ->select(
+                'Producto.ProductoId',
+                'Producto.ProductoNombre',
+                'Categoria_Producto.Categoria_ProductoDescripcion_categoria as categoria',
+                'Producto.ProductoStockActual as stock',
+                'Producto.ProductoStockMinimo as minimo',
+                DB::raw('COALESCE("Detalle_Producto_medida"."Detalle_Producto_medida_precio_venta", 0) as precio')
+            )
+            ->orderBy('Producto.ProductoStockActual', 'ASC')
             ->limit($n)
             ->get()
             ->map(fn($r) => [
@@ -699,7 +717,7 @@ class ChartGeneratorService
         $rows = DB::table('Cliente')
             ->where('ClienteEliminado', 'N')
             ->when(!empty($f['estado']), fn($q) => $q->where('ClienteEstado', $f['estado']))
-            ->selectRaw('ClienteId, ClienteNombre, ClienteTelefono, ClienteDireccion, ClienteEstado')
+            ->select('ClienteId', 'ClienteNombre', 'ClienteTelefono', 'ClienteDireccion', 'ClienteEstado')
             ->orderBy('ClienteNombre')
             ->limit($n)
             ->get()
@@ -718,9 +736,15 @@ class ChartGeneratorService
     {
         $rows = DB::table('Movimiento_producto')
             ->join('Producto', 'Producto.ProductoId', '=', 'Movimiento_producto.Movimiento_producto_ProductoId')
-            ->when(!empty($f['fecha_desde']), fn($q) => $q->whereRaw('CAST(Movimiento_producto.Movimiento_productoFecha AS DATE) >= ?', [$f['fecha_desde']]))
-            ->when(!empty($f['fecha_hasta']), fn($q) => $q->whereRaw('CAST(Movimiento_producto.Movimiento_productoFecha AS DATE) <= ?', [$f['fecha_hasta']]))
-            ->selectRaw('Producto.ProductoNombre as producto, Movimiento_producto.Movimiento_productoTipo as tipo, Movimiento_producto.Movimiento_productoCantidad as cantidad, Movimiento_producto.Movimiento_productoMotivo as motivo, CAST(Movimiento_producto.Movimiento_productoFecha AS DATE) as fecha')
+            ->when(!empty($f['fecha_desde']), fn($q) => $q->whereDate('Movimiento_producto.Movimiento_productoFecha', '>=', $f['fecha_desde']))
+            ->when(!empty($f['fecha_hasta']), fn($q) => $q->whereDate('Movimiento_producto.Movimiento_productoFecha', '<=', $f['fecha_hasta']))
+            ->select(
+                'Producto.ProductoNombre as producto',
+                'Movimiento_producto.Movimiento_productoTipo as tipo',
+                'Movimiento_producto.Movimiento_productoCantidad as cantidad',
+                'Movimiento_producto.Movimiento_productoMotivo as motivo',
+                DB::raw('CAST("Movimiento_producto"."Movimiento_productoFecha" AS DATE) as fecha')
+            )
             ->orderByDesc('Movimiento_producto.Movimiento_productoFecha')
             ->limit($n)
             ->get()
@@ -744,10 +768,10 @@ class ChartGeneratorService
         $q = DB::table('Pedido')->where('PedidoEliminado', 'N');
 
         if (!empty($f['fecha_desde'])) {
-            $q->whereRaw('CAST(PedidoFechaCreacion AS DATE) >= ?', [$f['fecha_desde']]);
+            $q->whereDate('PedidoFechaCreacion', '>=', $f['fecha_desde']);
         }
         if (!empty($f['fecha_hasta'])) {
-            $q->whereRaw('CAST(PedidoFechaCreacion AS DATE) <= ?', [$f['fecha_hasta']]);
+            $q->whereDate('PedidoFechaCreacion', '<=', $f['fecha_hasta']);
         }
         if (!empty($f['canal'])) {
             $q->where('Pedido_canal_pedidoId', $f['canal']);
@@ -817,21 +841,24 @@ class ChartGeneratorService
             'ventas', 'ventas_del_dia' => (function () use ($desde, $hasta) {
                 $val = DB::table('Pedido')
                     ->where('PedidoEliminado', 'N')->where('PedidoEstado_pedido', 'C')
-                    ->whereBetween(DB::raw('CAST(PedidoFechaCreacion AS DATE)'), [$desde, $hasta])
+                    ->whereDate('PedidoFechaCreacion', '>=', $desde)
+                    ->whereDate('PedidoFechaCreacion', '<=', $hasta)
                     ->sum('PedidoTotal');
                 return ['valor' => (float)$val, 'etiqueta' => 'Órdenes', 'formatted' => 'S/ ' . number_format($val, 2)];
             })(),
             'pedidos' => (function () use ($desde, $hasta) {
                 $val = DB::table('Pedido')
                     ->where('PedidoEliminado', 'N')
-                    ->whereBetween(DB::raw('CAST(PedidoFechaCreacion AS DATE)'), [$desde, $hasta])
+                    ->whereDate('PedidoFechaCreacion', '>=', $desde)
+                    ->whereDate('PedidoFechaCreacion', '<=', $hasta)
                     ->count();
                 return ['valor' => $val, 'etiqueta' => 'Pedidos', 'formatted' => "{$val} pedidos"];
             })(),
             'errores' => (function () use ($desde, $hasta) {
                 $val = DB::table('Pedido')
                     ->where('PedidoEliminado', 'N')->where('PedidoTieneError', 'S')
-                    ->whereBetween(DB::raw('CAST(PedidoFechaCreacion AS DATE)'), [$desde, $hasta])
+                    ->whereDate('PedidoFechaCreacion', '>=', $desde)
+                    ->whereDate('PedidoFechaCreacion', '<=', $hasta)
                     ->count();
                 return ['valor' => $val, 'etiqueta' => 'Errores', 'formatted' => "{$val} errores"];
             })(),

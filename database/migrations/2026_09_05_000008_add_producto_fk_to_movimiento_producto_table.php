@@ -12,8 +12,12 @@ return new class extends Migration
      */
     public function up(): void
     {
-        // 1. Renombrar la columna a Movimiento_producto_ProductoId usando sp_rename de SQL Server para conservar los datos
-        DB::statement("EXEC sp_rename 'Movimiento_producto.Movimiento_producto_Detalle_Producto_medida_ProductoId', 'Movimiento_producto_ProductoId', 'COLUMN'");
+        // 1. Renombrar la columna a Movimiento_producto_ProductoId
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement("EXEC sp_rename 'Movimiento_producto.Movimiento_producto_Detalle_Producto_medida_ProductoId', 'Movimiento_producto_ProductoId', 'COLUMN'");
+        } else {
+            DB::statement('ALTER TABLE "Movimiento_producto" RENAME COLUMN "Movimiento_producto_Detalle_Producto_medida_ProductoId" TO "Movimiento_producto_ProductoId"');
+        }
 
         // 2. Agregar la clave foránea hacia la tabla Producto
         Schema::table('Movimiento_producto', function (Blueprint $table) {
@@ -34,6 +38,10 @@ return new class extends Migration
             $table->dropForeign('Movimiento_producto_ProductoFK');
         });
 
-        DB::statement("EXEC sp_rename 'Movimiento_producto.Movimiento_producto_ProductoId', 'Movimiento_producto_Detalle_Producto_medida_ProductoId', 'COLUMN'");
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement("EXEC sp_rename 'Movimiento_producto.Movimiento_producto_ProductoId', 'Movimiento_producto_Detalle_Producto_medida_ProductoId', 'COLUMN'");
+        } else {
+            DB::statement('ALTER TABLE "Movimiento_producto" RENAME COLUMN "Movimiento_producto_ProductoId" TO "Movimiento_producto_Detalle_Producto_medida_ProductoId"');
+        }
     }
 };

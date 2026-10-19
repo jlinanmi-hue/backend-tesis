@@ -23,6 +23,7 @@ class Cliente extends Model
         'ClienteNumero',
         'ClienteEstado',
         'ClienteRuc',
+        'ClienteOrigen',
         'ClienteComprasCount',
         'ClienteTotalMonto',
         'ClienteUltimaCompra',

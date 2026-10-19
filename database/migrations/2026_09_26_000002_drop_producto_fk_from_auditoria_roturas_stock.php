@@ -13,9 +13,16 @@ return new class extends Migration
     public function up(): void
     {
         // 1. Eliminar la Foreign Key entre Producto y auditoria_roturas_stock si existe
-        $fks = DB::select("SELECT name FROM sys.foreign_keys WHERE name = 'auditoria_roturas_stock_producto_id_foreign'");
-        if (!empty($fks)) {
-            DB::statement("ALTER TABLE auditoria_roturas_stock DROP CONSTRAINT auditoria_roturas_stock_producto_id_foreign");
+        if (DB::getDriverName() === 'sqlsrv') {
+            $fks = DB::select("SELECT name FROM sys.foreign_keys WHERE name = 'auditoria_roturas_stock_producto_id_foreign'");
+            if (!empty($fks)) {
+                DB::statement("ALTER TABLE auditoria_roturas_stock DROP CONSTRAINT auditoria_roturas_stock_producto_id_foreign");
+            }
+        } elseif (DB::getDriverName() === 'pgsql') {
+            $fks = DB::select("SELECT constraint_name FROM information_schema.table_constraints WHERE table_name = 'auditoria_roturas_stock' AND constraint_name = 'auditoria_roturas_stock_producto_id_foreign'");
+            if (!empty($fks)) {
+                DB::statement('ALTER TABLE "auditoria_roturas_stock" DROP CONSTRAINT "auditoria_roturas_stock_producto_id_foreign"');
+            }
         }
 
         // 2. Eliminar la columna producto_id de auditoria_roturas_stock si existe

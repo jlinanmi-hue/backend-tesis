@@ -104,7 +104,7 @@ class CanalPedidoRepository implements CanalPedidoRepositoryInterface
         $last = DB::table('Canal_pedido')
             ->select('Canal_pedidoId')
             ->where('Canal_pedidoId', 'like', 'CNL-%')
-            ->orderByRaw('LEN(Canal_pedidoId) DESC, Canal_pedidoId DESC')
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("Canal_pedidoId", \'\'))) DESC, "Canal_pedidoId" DESC')
             ->first();
 
         if (!$last) {

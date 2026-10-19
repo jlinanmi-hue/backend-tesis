@@ -84,6 +84,7 @@ class AuthController extends Controller
                     'UsuarioId' => $usuario->UsuarioId,
                     'UsuarioUserName' => $usuario->UsuarioUserName,
                     'rol' => $usuario->rolUser->Rol_UserRol_Usercol ?? null,
+                    'rol_codigo' => $usuario->rolUser->Rol_UserEmpleadocol ?? null,
                 ],
                 'empleado' => [
                     'EmpleadoId' => $empleado->EmpleadoId,

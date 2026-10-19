@@ -16,9 +16,9 @@ return new class extends Migration
             $table->string('ProductoNombre', 45);
             $table->string('Producto_Categoria_ProductoId', 20);
             $table->string('ProductoMarca', 45);
-            $table->string('ProductoStockActual', 45);
-            $table->string('ProductoStockMinimo', 45);
-            $table->string('ProductoStockMaximo', 45);
+            $table->decimal('ProductoStockActual', 18, 2)->default(0);
+            $table->decimal('ProductoStockMinimo', 18, 2)->default(0);
+            $table->decimal('ProductoStockMaximo', 18, 2)->default(0);
             $table->char('ProductoEstado', 1)->default('A');
             $table->char('ProductoEliminado', 1)->default('N');
             $table->string('ProductoUsuarioCreacion', 100);

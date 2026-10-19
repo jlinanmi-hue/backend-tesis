@@ -98,7 +98,7 @@ class ProductoUbiRepository implements ProductoUbiRepositoryInterface
         $last = DB::table('producto_ubi')
             ->select('producto_ubi_id')
             ->where('producto_ubi_id', 'like', 'UBI-%')
-            ->orderByRaw('LEN(producto_ubi_id) DESC, producto_ubi_id DESC')
+            ->orderByRaw("LENGTH(RTRIM(COALESCE(producto_ubi_id, ''))) DESC, producto_ubi_id DESC")
             ->first();
 
         if (!$last) {

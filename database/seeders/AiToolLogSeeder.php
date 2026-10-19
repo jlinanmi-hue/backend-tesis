@@ -14,7 +14,13 @@ class AiToolLogSeeder extends Seeder
     public function run(): void
     {
         // Desactivar restricciones de claves forÃ¡neas temporalmente
-        DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT all"');
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT all"');
+        } elseif (DB::getDriverName() === 'pgsql') {
+            try {
+            DB::statement("SET session_replication_role = 'replica';");
+        } catch (\Throwable $e) {}
+        }
 
         // Limpiar tabla antes de poblar
         DB::table('ai_tool_logs')->delete();
@@ -5009,36 +5015,41 @@ Puedes registrar al nuevo proveedor para completar la orden automÃ¡ticamente, 
             ],
         ];
 
-        // InserciÃ³n en bloques con IDENTITY_INSERT habilitado
-        foreach (array_chunk($rows, 25) as $chunk) {
-            if (empty($chunk)) continue;
-            $columns = array_keys($chunk[0]);
-            $colList = '[' . implode('], [', $columns) . ']';
+        if (DB::getDriverName() === 'sqlsrv') {
+            foreach (array_chunk($rows, 25) as $chunk) {
+                if (empty($chunk)) continue;
+                $columns = array_keys($chunk[0]);
+                $colList = '[' . implode('], [', $columns) . ']';
 
-            $valuesSql = [];
-            foreach ($chunk as $r) {
-                $valParts = [];
-                foreach ($r as $val) {
-                    if ($val === null) {
-                        $valParts[] = 'NULL';
-                    } elseif (is_numeric($val) && !is_string($val)) {
-                        $valParts[] = $val;
-                    } elseif (is_bool($val)) {
-                        $valParts[] = $val ? '1' : '0';
-                    } else {
-                        $escaped = str_replace("'", "''", (string)$val);
-                        $valParts[] = "N'" . $escaped . "'";
+                $valuesSql = [];
+                foreach ($chunk as $r) {
+                    $valParts = [];
+                    foreach ($r as $val) {
+                        if ($val === null) {
+                            $valParts[] = 'NULL';
+                        } elseif (is_numeric($val) && !is_string($val)) {
+                            $valParts[] = $val;
+                        } elseif (is_bool($val)) {
+                            $valParts[] = $val ? '1' : '0';
+                        } else {
+                            $escaped = str_replace("'", "''", (string)$val);
+                            $valParts[] = "N'" . $escaped . "'";
+                        }
                     }
+                    $valuesSql[] = '(' . implode(', ', $valParts) . ')';
                 }
-                $valuesSql[] = '(' . implode(', ', $valParts) . ')';
+
+                $sql = "SET IDENTITY_INSERT [ai_tool_logs] ON;\n"
+                     . "INSERT INTO [ai_tool_logs] ($colList) VALUES\n"
+                     . implode(",\n", $valuesSql) . ";\n"
+                     . "SET IDENTITY_INSERT [ai_tool_logs] OFF;";
+
+                DB::unprepared($sql);
             }
-
-            $sql = "SET IDENTITY_INSERT [ai_tool_logs] ON;\n"
-                 . "INSERT INTO [ai_tool_logs] ($colList) VALUES\n"
-                 . implode(",\n", $valuesSql) . ";\n"
-                 . "SET IDENTITY_INSERT [ai_tool_logs] OFF;";
-
-            DB::unprepared($sql);
+        } else {
+            foreach (array_chunk($rows, 50) as $chunk) {
+                DB::table('ai_tool_logs')->insert($chunk);
+            }
         }
 
         // Reactivar restricciones de claves forÃ¡neas

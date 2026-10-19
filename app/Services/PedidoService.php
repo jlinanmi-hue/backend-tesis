@@ -16,6 +16,7 @@ use Exception;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
 class PedidoService
@@ -409,6 +410,13 @@ class PedidoService
                         'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $unidadId,
                         'Movimiento_productoEliminado' => 'N',
                     ], $auditMov));
+
+                    // Evaluar alerta inteligente de stock tras la salida por venta
+                    try {
+                        app(\App\Services\StockAlertService::class)->evaluar($producto->fresh());
+                    } catch (\Throwable $e) {
+                        Log::warning("StockAlert PedidoService::crearPedido error en {$producto->ProductoId}: {$e->getMessage()}");
+                    }
                 }
 
                 // 3. Registrar Detalle_Pedido_Productos con unidad, factor y desglose físico
@@ -592,6 +600,73 @@ class PedidoService
                 }
             }
 
+            // Cliente: permite reasignar la orden a otro cliente registrado
+            // (por ejemplo, al corregir un pedido desde la app móvil).
+            if (isset($datos['cliente_id']) || isset($datos['Pedido_ClienteId'])) {
+                $clienteIdNuevo = trim((string)($datos['cliente_id'] ?? $datos['Pedido_ClienteId']));
+                if ($clienteIdNuevo !== '' && $clienteIdNuevo !== (string)$pedido->Pedido_ClienteId) {
+                    $clienteNuevo = Cliente::where('ClienteId', $clienteIdNuevo)
+                        ->where('ClienteEliminado', 'N')
+                        ->first();
+                    if (!$clienteNuevo) {
+                        throw ValidationException::withMessages([
+                            'cliente_id' => 'El cliente seleccionado no existe o está inactivo.',
+                        ]);
+                    }
+                    $camposActualizar['Pedido_ClienteId'] = $clienteIdNuevo;
+                }
+            }
+
+            // Auditoría en Historial de Correcciones para Indicador 2 (PEOR)
+            $usuarioMod = auth()->user()?->UsuarioUsername ?? 'ADMIN';
+            $motivoCorrec = $datos['motivo_correccion'] ?? $datos['motivo'] ?? 'Corrección de orden';
+
+            // Acciones sobre productos (agregar/eliminar) ANTES del bloque de
+            // delivery: así el mínimo de S/ 100 se valida con el subtotal ya
+            // actualizado por las acciones de la misma edición.
+            $acciones = $datos['acciones'] ?? [];
+            if (!empty($datos['producto_id']) && !empty($datos['cantidad'])) {
+                $acciones[] = [
+                    'tipo'              => $datos['accion'] ?? $datos['tipo_accion'] ?? 'agregar',
+                    'producto_id'       => $datos['producto_id'],
+                    'cantidad'          => (float)$datos['cantidad'],
+                    'unidad_id'         => $datos['unidad_id'] ?? null,
+                    'factor_conversion' => $datos['factor_conversion'] ?? null,
+                    'precio_unitario'   => $datos['precio_unitario'] ?? null,
+                ];
+            }
+
+            if (!empty($acciones)) {
+                foreach ($acciones as $acc) {
+                    $tipo = strtolower(trim($acc['tipo'] ?? 'agregar'));
+                    $prodId = trim($acc['producto_id'] ?? '');
+                    $cant = (float)($acc['cantidad'] ?? 0);
+                    $unidadId = $acc['unidad_id'] ?? null;
+                    $factor = !empty($acc['factor_conversion']) ? (float)$acc['factor_conversion'] : null;
+                    $precio = !empty($acc['precio_unitario']) ? (float)$acc['precio_unitario'] : null;
+
+                    if ($tipo === 'agregar' && $cant > 0 && !empty($prodId)) {
+                        $this->agregarProductoAlPedido($pedido, $prodId, $cant, $unidadId, $factor, $precio);
+                    } elseif ($tipo === 'eliminar' && !empty($prodId)) {
+                        $this->eliminarProductoDelPedido($pedido, $prodId);
+                    }
+                }
+
+                try {
+                    PedidoHistorialCorreccion::create([
+                        'pedido_id'        => $id,
+                        'campo_modificado' => 'DetalleProductos',
+                        'valor_anterior'   => 'Líneas de producto previas',
+                        'valor_nuevo'      => count($acciones) . ' acción(es) ejecutada(s)',
+                        'motivo'           => $motivoCorrec,
+                        'usuario'          => $usuarioMod,
+                        'created_at'       => now(),
+                    ]);
+                } catch (\Throwable $e) {}
+
+                $this->recalcularTotalesPedido($pedido);
+            }
+
             // Manejo de Delivery en edición (Permite conmutar entre Delivery y Recojo en Tienda)
             $huboCambioDelivery = false;
             if (array_key_exists('es_delivery', $datos) || array_key_exists('PedidoEsDelivery', $datos)) {
@@ -693,10 +768,6 @@ class PedidoService
                 $this->pedidoRepository->update($id, $camposActualizar);
             }
 
-            // Auditoría en Historial de Correcciones para Indicador 2 (PEOR)
-            $usuarioMod = auth()->user()?->UsuarioUsername ?? 'ADMIN';
-            $motivoCorrec = $datos['motivo_correccion'] ?? $datos['motivo'] ?? 'Corrección de orden';
-
             foreach ($camposActualizar as $campo => $nuevoValor) {
                 $valorAnterior = $pedido->{$campo} ?? '';
                 if ((string)$valorAnterior !== (string)$nuevoValor) {
@@ -712,50 +783,6 @@ class PedidoService
                         ]);
                     } catch (\Throwable $e) {}
                 }
-            }
-
-            // Normalizar acciones de productos
-            $acciones = $datos['acciones'] ?? [];
-            if (!empty($datos['producto_id']) && !empty($datos['cantidad'])) {
-                $acciones[] = [
-                    'tipo'              => $datos['accion'] ?? $datos['tipo_accion'] ?? 'agregar',
-                    'producto_id'       => $datos['producto_id'],
-                    'cantidad'          => (float)$datos['cantidad'],
-                    'unidad_id'         => $datos['unidad_id'] ?? null,
-                    'factor_conversion' => $datos['factor_conversion'] ?? null,
-                    'precio_unitario'   => $datos['precio_unitario'] ?? null,
-                ];
-            }
-
-            if (!empty($acciones)) {
-                foreach ($acciones as $acc) {
-                    $tipo = strtolower(trim($acc['tipo'] ?? 'agregar'));
-                    $prodId = trim($acc['producto_id'] ?? '');
-                    $cant = (float)($acc['cantidad'] ?? 0);
-                    $unidadId = $acc['unidad_id'] ?? null;
-                    $factor = !empty($acc['factor_conversion']) ? (float)$acc['factor_conversion'] : null;
-                    $precio = !empty($acc['precio_unitario']) ? (float)$acc['precio_unitario'] : null;
-
-                    if ($tipo === 'agregar' && $cant > 0 && !empty($prodId)) {
-                        $this->agregarProductoAlPedido($pedido, $prodId, $cant, $unidadId, $factor, $precio);
-                    } elseif ($tipo === 'eliminar' && !empty($prodId)) {
-                        $this->eliminarProductoDelPedido($pedido, $prodId);
-                    }
-                }
-
-                try {
-                    PedidoHistorialCorreccion::create([
-                        'pedido_id'        => $id,
-                        'campo_modificado' => 'DetalleProductos',
-                        'valor_anterior'   => 'Líneas de producto previas',
-                        'valor_nuevo'      => count($acciones) . ' acción(es) ejecutada(s)',
-                        'motivo'           => $motivoCorrec,
-                        'usuario'          => $usuarioMod,
-                        'created_at'       => now(),
-                    ]);
-                } catch (\Throwable $e) {}
-
-                $this->recalcularTotalesPedido($pedido);
             }
 
             // Actualizar métricas de corrección y error
@@ -785,7 +812,7 @@ class PedidoService
 
             $this->pedidoRepository->update($id, $camposKpi);
 
-            if ($huboCambioDelivery && empty($acciones)) {
+            if ($huboCambioDelivery) {
                 $this->recalcularTotalesPedido($pedido);
             }
 
@@ -830,15 +857,19 @@ class PedidoService
 
         $cantidadBase = round($cant * $factor, 2);
         $stockFisico = max(0.0, (float)$producto->ProductoStockActual);
-        $stockTotalDisp = $producto->stock_total_vendible;
 
-        if ($cantidadBase > $stockFisico) {
+        // Las cotizaciones no reservan stock ni generan Kárdex (igual que al
+        // crear el pedido): solo los pedidos reales descuentan inventario.
+        $esCotizacion = in_array(mb_strtoupper(trim((string)$pedido->PedidoAcuerdo_Comercial)), ['COTIZACION', 'COTIZACIÓN', 'COT'])
+            || (stripos((string)$pedido->PedidoAcuerdo_Comercial, 'cotiza') !== false);
+
+        if (!$esCotizacion && $cantidadBase > $stockFisico) {
             throw ValidationException::withMessages([
                 'stock' => "Stock insuficiente para '{$producto->ProductoNombre}'. Requerido: {$cant} ({$cantidadBase} unidades base), Stock Físico disponible: {$stockFisico}.",
             ]);
         }
 
-        $cantFisica = $cantidadBase;
+        $cantFisica = $esCotizacion ? 0.00 : $cantidadBase;
 
         // Descontar inventario
         if ($cantFisica > 0) {
@@ -847,23 +878,32 @@ class PedidoService
 
         $nuevoStockFisico = (float)$producto->fresh()->ProductoStockActual;
 
-        // Registrar Kárdex Salida
-        $movimientoId = $this->inventarioService->getNextMovimientoId();
-        $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
-        MovimientoProducto::create(array_merge([
-            'Movimiento_productoId' => $movimientoId,
-            'Movimiento_productoCantidadPresentacion' => (string)$cant,
-            'Movimiento_productoDocumentoOperacionId' => $pedido->PedidoId,
-            'Movimiento_productoTipoMovimiento' => 'S',
-            'Movimiento_productoCostoPrecioUnitario' => (string)$precioUnitario,
-            'Movimiento_productoCantidadEntrada' => '0',
-            'Movimiento_productoCantidadSalida' => (string)$cantFisica,
-            'Movimiento_productoCantidadSaldo' => (string)$nuevoStockFisico,
-            'Movimiento_productoFecha_Movimiento' => now(),
-            'Movimiento_producto_ProductoId' => $producto->ProductoId,
-            'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $unidadId,
-            'Movimiento_productoEliminado' => 'N',
-        ], $auditMov));
+        // Registrar Kárdex Salida (solo pedidos reales)
+        if (!$esCotizacion) {
+            $movimientoId = $this->inventarioService->getNextMovimientoId();
+            $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
+            MovimientoProducto::create(array_merge([
+                'Movimiento_productoId' => $movimientoId,
+                'Movimiento_productoCantidadPresentacion' => (string)$cant,
+                'Movimiento_productoDocumentoOperacionId' => $pedido->PedidoId,
+                'Movimiento_productoTipoMovimiento' => 'S',
+                'Movimiento_productoCostoPrecioUnitario' => (string)$precioUnitario,
+                'Movimiento_productoCantidadEntrada' => '0',
+                'Movimiento_productoCantidadSalida' => (string)$cantFisica,
+                'Movimiento_productoCantidadSaldo' => (string)$nuevoStockFisico,
+                'Movimiento_productoFecha_Movimiento' => now(),
+                'Movimiento_producto_ProductoId' => $producto->ProductoId,
+                'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $unidadId,
+                'Movimiento_productoEliminado' => 'N',
+            ], $auditMov));
+
+            // Evaluar alerta inteligente de stock tras la salida por venta
+            try {
+                app(\App\Services\StockAlertService::class)->evaluar($producto->fresh());
+            } catch (\Throwable $e) {
+                Log::warning("StockAlert PedidoService::agregarProductoAlPedido error en {$producto->ProductoId}: {$e->getMessage()}");
+            }
+        }
 
         // Actualizar o crear detalle
         $detalleExistente = DetallePedidoProductos::where('Detalle_Pedido_Productos_PedidoId', $pedido->PedidoId)
@@ -913,14 +953,13 @@ class PedidoService
             $cantFisica = (float)$det->Detalle_Pedido_Productos_cantidad_fisica;
 
             $producto = Producto::where('ProductoId', $det->Detalle_Pedido_Productos_ProductoId)->lockForUpdate()->first();
-            if ($producto) {
-                if ($cantFisica > 0) {
-                    $producto->increment('ProductoStockActual', $cantFisica);
-                }
+            if ($producto && $cantFisica > 0) {
+                $producto->increment('ProductoStockActual', $cantFisica);
 
                 $nuevoSaldo = (float)$producto->fresh()->ProductoStockActual;
 
-                // Registrar devolución en Kárdex
+                // Registrar devolución en Kárdex (solo si la línea reservó
+                // stock; las cotizaciones no descuentan inventario).
                 $movimientoId = $this->inventarioService->getNextMovimientoId();
                 MovimientoProducto::create(array_merge([
                     'Movimiento_productoId' => $movimientoId,
@@ -1273,7 +1312,7 @@ class PedidoService
             ->where('Detalle_Pedido_Productos.Detalle_Pedido_ProductosEliminado', 'N')
             ->select(
                 'Detalle_Pedido_Productos.Detalle_Pedido_Productos_ProductoId as producto_id',
-                DB::raw('SUM(Detalle_Pedido_Productos.Detalle_Pedido_Productos_cantidad) as total_reservado')
+                DB::raw('SUM("Detalle_Pedido_Productos"."Detalle_Pedido_Productos_cantidad") as total_reservado')
             )
             ->groupBy('Detalle_Pedido_Productos.Detalle_Pedido_Productos_ProductoId')
             ->pluck('total_reservado', 'producto_id');

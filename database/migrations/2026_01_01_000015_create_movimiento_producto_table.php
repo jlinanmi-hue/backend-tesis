@@ -17,9 +17,9 @@ return new class extends Migration
             $table->string('Movimiento_productoDocumentoOperacionId', 45);
             $table->char('Movimiento_productoTipoMovimiento', 1);
             $table->decimal('Movimiento_productoCostoPrecioUnitario', 10, 2);
-            $table->string('Movimiento_productoCantidadEntrada', 45);
-            $table->string('Movimiento_productoCantidadSalida', 45);
-            $table->string('Movimiento_productoCantidadSaldo', 45);
+            $table->decimal('Movimiento_productoCantidadEntrada', 18, 2)->default(0);
+            $table->decimal('Movimiento_productoCantidadSalida', 18, 2)->default(0);
+            $table->decimal('Movimiento_productoCantidadSaldo', 18, 2)->default(0);
             $table->dateTime('Movimiento_productoFecha_Movimiento');
             $table->string('Movimiento_producto_Detalle_Producto_medida_ProductoId', 20);
             $table->string('Movimiento_producto_Detalle_Producto_medida_unidades_medidaId', 20);

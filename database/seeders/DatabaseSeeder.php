@@ -17,7 +17,13 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->command->info('1/3 - Desactivando restricciones de integridad referencial...');
-        DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT all"');
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? NOCHECK CONSTRAINT all"');
+        } elseif (DB::getDriverName() === 'pgsql') {
+            try {
+            DB::statement("SET session_replication_role = 'replica';");
+        } catch (\Throwable $e) {}
+        }
 
         $this->command->info('2/3 - Ejecutando Seeders con los datos de producción/tesis...');
         $this->call([
@@ -51,7 +57,13 @@ class DatabaseSeeder extends Seeder
         ]);
 
         $this->command->info('3/3 - Reactivando y verificando restricciones de integridad referencial...');
-        DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT all"');
+        if (DB::getDriverName() === 'sqlsrv') {
+            DB::statement('EXEC sp_msforeachtable "ALTER TABLE ? WITH CHECK CHECK CONSTRAINT all"');
+        } elseif (DB::getDriverName() === 'pgsql') {
+            try {
+            DB::statement("SET session_replication_role = 'origin';");
+        } catch (\Throwable $e) {}
+        }
 
         $this->command->info('✅ ¡Todos los datos de la base de datos han sido cargados exitosamente!');
     }

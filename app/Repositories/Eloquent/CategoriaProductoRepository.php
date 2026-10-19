@@ -104,7 +104,7 @@ class CategoriaProductoRepository implements CategoriaProductoRepositoryInterfac
         $last = DB::table('Categoria_Producto')
             ->select('Categoria_ProductoId')
             ->where('Categoria_ProductoId', 'like', 'CAT-%')
-            ->orderByRaw('LEN(Categoria_ProductoId) DESC, Categoria_ProductoId DESC')
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("Categoria_ProductoId", \'\'))) DESC, "Categoria_ProductoId" DESC')
             ->first();
 
         if (!$last) {

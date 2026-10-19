@@ -259,7 +259,7 @@ class PedidoRepository implements PedidoRepositoryInterface
                 'Canal_pedido.Canal_pedidoId as canal_id',
                 'Canal_pedido.Canal_pedidoDescripcion as canal_nombre',
                 DB::raw('COUNT(*) as total_ordenes'),
-                DB::raw('SUM(Pedido.PedidoTotal) as total_monto')
+                DB::raw('SUM("Pedido"."PedidoTotal") as total_monto')
             )
             ->groupBy('Canal_pedido.Canal_pedidoId', 'Canal_pedido.Canal_pedidoDescripcion')
             ->get();

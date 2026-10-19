@@ -150,10 +150,10 @@ class DashboardService
     {
         $query = DB::table('Pedido')
             ->select(
-                DB::raw('CAST(PedidoFechaCreacion AS DATE) as fecha'),
-                DB::raw("SUM(CASE WHEN PedidoEstado_pedido = 'C' THEN 1 ELSE 0 END) as exitosas"),
-                DB::raw("SUM(CASE WHEN PedidoEstado_pedido = 'A' THEN 1 ELSE 0 END) as fallidas"),
-                DB::raw("SUM(CASE WHEN PedidoEstado_pedido = 'P' THEN 1 ELSE 0 END) as pendientes")
+                DB::raw('CAST("PedidoFechaCreacion" AS DATE) as fecha'),
+                DB::raw("SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN 1 ELSE 0 END) as exitosas"),
+                DB::raw("SUM(CASE WHEN \"PedidoEstado_pedido\" = 'A' THEN 1 ELSE 0 END) as fallidas"),
+                DB::raw("SUM(CASE WHEN \"PedidoEstado_pedido\" = 'P' THEN 1 ELSE 0 END) as pendientes")
             )
             ->where('PedidoEliminado', 'N')
             ->whereBetween('PedidoFechaCreacion', [$inicio, $fin]);
@@ -162,7 +162,7 @@ class DashboardService
             $query->where('Pedido_canal_pedidoId', $filters['canal']);
         }
 
-        $dbRows = $query->groupBy(DB::raw('CAST(PedidoFechaCreacion AS DATE)'))
+        $dbRows = $query->groupBy(DB::raw('CAST("PedidoFechaCreacion" AS DATE)'))
             ->orderBy('fecha', 'asc')
             ->get()
             ->keyBy(fn($item) => Carbon::parse($item->fecha)->format('Y-m-d'))
@@ -209,12 +209,12 @@ class DashboardService
     {
         $query = DB::table('Pedido')
             ->select(
-                DB::raw('CAST(PedidoFechaCreacion AS DATE) as fecha'),
+                DB::raw('CAST("PedidoFechaCreacion" AS DATE) as fecha'),
                 DB::raw("AVG(CASE 
-                    WHEN PedidoFechaDespacho IS NOT NULL AND PedidoFechaInicioPreparacion IS NOT NULL 
-                        THEN DATEDIFF(MINUTE, PedidoFechaInicioPreparacion, PedidoFechaDespacho)
-                    WHEN PedidoFechaModificacion IS NOT NULL 
-                        THEN DATEDIFF(MINUTE, PedidoFechaCreacion, PedidoFechaModificacion) 
+                    WHEN \"PedidoFechaDespacho\" IS NOT NULL AND \"PedidoFechaInicioPreparacion\" IS NOT NULL 
+                        THEN ROUND(EXTRACT(EPOCH FROM (\"PedidoFechaDespacho\" - \"PedidoFechaInicioPreparacion\")) / 60.0)
+                    WHEN \"PedidoFechaModificacion\" IS NOT NULL 
+                        THEN ROUND(EXTRACT(EPOCH FROM (\"PedidoFechaModificacion\" - \"PedidoFechaCreacion\")) / 60.0) 
                     ELSE 15 
                 END) as tiempo_promedio_min")
             )
@@ -226,7 +226,7 @@ class DashboardService
             $query->where('Pedido_canal_pedidoId', $filters['canal']);
         }
 
-        $rows = $query->groupBy(DB::raw('CAST(PedidoFechaCreacion AS DATE)'))
+        $rows = $query->groupBy(DB::raw('CAST("PedidoFechaCreacion" AS DATE)'))
             ->orderBy('fecha', 'asc')
             ->get();
 
@@ -246,7 +246,7 @@ class DashboardService
     {
         $query = DB::table('Pedido')
             ->select(
-                DB::raw("COALESCE(PedidoCausaFalloDespacho, PedidoMotivoAnulacion, 'FALTA_STOCK') as motivo"),
+                DB::raw("COALESCE(\"PedidoCausaFalloDespacho\", \"PedidoMotivoAnulacion\", 'FALTA_STOCK') as motivo"),
                 DB::raw('COUNT(*) as total')
             )
             ->where('PedidoEliminado', 'N')
@@ -257,7 +257,7 @@ class DashboardService
             $query->where('Pedido_canal_pedidoId', $filters['canal']);
         }
 
-        return $query->groupBy(DB::raw("COALESCE(PedidoCausaFalloDespacho, PedidoMotivoAnulacion, 'FALTA_STOCK')"))
+        return $query->groupBy(DB::raw("COALESCE(\"PedidoCausaFalloDespacho\", \"PedidoMotivoAnulacion\", 'FALTA_STOCK')"))
             ->orderByDesc('total')
             ->get()
             ->toArray();
@@ -267,7 +267,7 @@ class DashboardService
     {
         $query = DB::table('Pedido')
             ->select(
-                DB::raw("COALESCE(PedidoEstadoDespacho, CASE WHEN PedidoEstado_pedido = 'C' THEN 'ENTREGADO_COMPLETO' WHEN PedidoEstado_pedido = 'A' THEN 'RECHAZADO' ELSE 'PENDIENTE' END) as estado_despacho"),
+                DB::raw("COALESCE(\"PedidoEstadoDespacho\", CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN 'ENTREGADO_COMPLETO' WHEN \"PedidoEstado_pedido\" = 'A' THEN 'RECHAZADO' ELSE 'PENDIENTE' END) as estado_despacho"),
                 DB::raw('COUNT(*) as total')
             )
             ->where('PedidoEliminado', 'N')
@@ -277,7 +277,7 @@ class DashboardService
             $query->where('Pedido_canal_pedidoId', $filters['canal']);
         }
 
-        $rows = $query->groupBy(DB::raw("COALESCE(PedidoEstadoDespacho, CASE WHEN PedidoEstado_pedido = 'C' THEN 'ENTREGADO_COMPLETO' WHEN PedidoEstado_pedido = 'A' THEN 'RECHAZADO' ELSE 'PENDIENTE' END)"))
+        $rows = $query->groupBy(DB::raw("COALESCE(\"PedidoEstadoDespacho\", CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN 'ENTREGADO_COMPLETO' WHEN \"PedidoEstado_pedido\" = 'A' THEN 'RECHAZADO' ELSE 'PENDIENTE' END)"))
             ->get();
 
         $totalGeneral = $rows->sum('total');
@@ -426,14 +426,14 @@ class DashboardService
     {
         $rows = DB::table('Pedido')
             ->select(
-                DB::raw("COALESCE(PedidoGravedadError, 'MODERADO') as gravedad"),
+                DB::raw("COALESCE(\"PedidoGravedadError\", 'MODERADO') as gravedad"),
                 DB::raw('COUNT(*) as total'),
-                DB::raw('SUM(COALESCE(PedidoCostoError, 0)) as costo_total')
+                DB::raw('SUM(COALESCE("PedidoCostoError", 0)) as costo_total')
             )
             ->where('PedidoEliminado', 'N')
             ->where('PedidoTieneError', 'S')
             ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
-            ->groupBy(DB::raw("COALESCE(PedidoGravedadError, 'MODERADO')"))
+            ->groupBy(DB::raw("COALESCE(\"PedidoGravedadError\", 'MODERADO')"))
             ->get();
 
         if ($rows->isEmpty()) {
@@ -451,7 +451,7 @@ class DashboardService
     {
         $res = DB::table('Pedido')
             ->select(
-                DB::raw("COALESCE(PedidoTipoError, 'Cantidad Errónea') as tipo"),
+                DB::raw("COALESCE(\"PedidoTipoError\", 'Cantidad Errónea') as tipo"),
                 DB::raw('COUNT(*) as total')
             )
             ->where('PedidoEliminado', 'N')
@@ -498,13 +498,13 @@ class DashboardService
     {
         $rows = DB::table('Pedido')
             ->select(
-                DB::raw("CASE WHEN PedidoOrigenIA = 'S' THEN 'IA (Automatizado)' ELSE 'Manual (Operario)' END as origen"),
+                DB::raw("CASE WHEN \"PedidoOrigenIA\" = 'S' THEN 'IA (Automatizado)' ELSE 'Manual (Operario)' END as origen"),
                 DB::raw('COUNT(*) as total')
             )
             ->where('PedidoEliminado', 'N')
             ->where('PedidoTieneError', 'S')
             ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
-            ->groupBy(DB::raw("CASE WHEN PedidoOrigenIA = 'S' THEN 'IA (Automatizado)' ELSE 'Manual (Operario)' END"))
+            ->groupBy(DB::raw("CASE WHEN \"PedidoOrigenIA\" = 'S' THEN 'IA (Automatizado)' ELSE 'Manual (Operario)' END"))
             ->get()
             ->keyBy('origen')
             ->map(fn($item) => (int)$item->total)
@@ -611,8 +611,8 @@ class DashboardService
             ->where('PedidoTieneError', 'S')
             ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
             ->avg(DB::raw('CASE 
-                WHEN PedidoTiempoCorreccionMin > 0 THEN PedidoTiempoCorreccionMin 
-                WHEN PedidoFechaModificacion IS NOT NULL THEN DATEDIFF(MINUTE, PedidoFechaCreacion, PedidoFechaModificacion) 
+                WHEN "PedidoTiempoCorreccionMin" > 0 THEN "PedidoTiempoCorreccionMin" 
+                WHEN "PedidoFechaModificacion" IS NOT NULL THEN ROUND(EXTRACT(EPOCH FROM ("PedidoFechaModificacion" - "PedidoFechaCreacion")) / 60.0) 
                 ELSE 8 
             END'));
 
@@ -794,13 +794,13 @@ class DashboardService
             ->leftJoin('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
             ->leftJoin('Producto as pr', 'pr.ProductoId', '=', 'd.Detalle_Pedido_Productos_ProductoId')
             ->select(
-                DB::raw("COALESCE(pr.ProductoNombre, 'Producto sin especificar') as producto"),
+                DB::raw("COALESCE(pr.\"ProductoNombre\", 'Producto sin especificar') as producto"),
                 DB::raw("SUM(CASE WHEN a.tipo_rotura = 'VENTA_PERDIDA' THEN 1 ELSE 0 END) as total_quiebres"),
                 DB::raw('0.0 as consumo_virtual'),
                 DB::raw('COUNT(*) as impacto_total')
             )
             ->whereBetween('a.created_at', [$inicio, $fin])
-            ->groupBy(DB::raw("COALESCE(pr.ProductoNombre, 'Producto sin especificar')"))
+            ->groupBy(DB::raw("COALESCE(pr.\"ProductoNombre\", 'Producto sin especificar')"))
             ->orderByDesc('impacto_total')
             ->limit(10)
             ->get();
@@ -835,7 +835,7 @@ class DashboardService
         return DB::table('Producto')
             ->select(
                 'ProductoNombre as producto',
-                DB::raw('CASE WHEN ProductoStockActual <= 0 THEN 1 ELSE 0 END as total_quiebres'),
+                DB::raw('CASE WHEN "ProductoStockActual" <= 0 THEN 1 ELSE 0 END as total_quiebres'),
                 DB::raw('0.0 as consumo_virtual'),
                 DB::raw('1 as impacto_total')
             )
@@ -854,7 +854,7 @@ class DashboardService
             ->join('Categoria_Producto as c', 'c.Categoria_ProductoId', '=', 'pr.Producto_Categoria_ProductoId')
             ->select(
                 'c.Categoria_ProductoDescripcion_categoria as categoria',
-                DB::raw('COUNT(CASE WHEN p.PedidoMotivoAnulacion = \'FALTA_STOCK\' THEN 1 END) as quiebres_fatales'),
+                DB::raw('COUNT(CASE WHEN p."PedidoMotivoAnulacion" = \'FALTA_STOCK\' THEN 1 END) as quiebres_fatales'),
                 DB::raw('0.0 as consumo_virtual'),
                 DB::raw('COUNT(*) as total')
             )
@@ -880,14 +880,14 @@ class DashboardService
     {
         $impact = DB::table('Pedido')
             ->select(
-                DB::raw('CAST(PedidoFechaCreacion AS DATE) as fecha'),
-                DB::raw('ROUND(SUM(PedidoTotal), 2) as monto_perdido'),
+                DB::raw('CAST("PedidoFechaCreacion" AS DATE) as fecha'),
+                DB::raw('ROUND(SUM("PedidoTotal"), 2) as monto_perdido'),
                 DB::raw('0.00 as monto_salvado')
             )
             ->where('PedidoEliminado', 'N')
             ->where('PedidoMotivoAnulacion', 'FALTA_STOCK')
             ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
-            ->groupBy(DB::raw('CAST(PedidoFechaCreacion AS DATE)'))
+            ->groupBy(DB::raw('CAST("PedidoFechaCreacion" AS DATE)'))
             ->orderBy('fecha', 'asc')
             ->get()
             ->toArray();
@@ -911,7 +911,7 @@ class DashboardService
                 'ProductoNombre',
                 'ProductoStockActual',
                 'ProductoStockMinimo',
-                DB::raw("COALESCE(ProductoZona, 'Zona A - Principal') as ProductoZona")
+                DB::raw("COALESCE(\"ProductoZona\", 'Zona A - Principal') as \"ProductoZona\"")
             )
             ->where('ProductoEliminado', 'N')
             ->where(function ($q) {
@@ -1342,11 +1342,11 @@ class DashboardService
             ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
             ->where('PedidoTiempoRegistroSeg', '>', 0)
             ->select(
-                DB::raw('ROUND(AVG(PedidoTiempoSeleccionClienteMs) / 1000.0, 1) as seleccion_cliente_seg'),
-                DB::raw('ROUND(AVG(PedidoTiempoCargaProductosMs) / 1000.0, 1) as carga_productos_seg'),
-                DB::raw('ROUND(AVG(PedidoTiempoValidacionStockMs) / 1000.0, 1) as validacion_stock_seg'),
-                DB::raw('ROUND(AVG(PedidoTiempoConfirmacionPagoMs) / 1000.0, 1) as confirmacion_pago_seg'),
-                DB::raw('ROUND(AVG(PedidoTiempoEfectivoSeg), 1) as tiempo_activo_seg')
+                DB::raw('ROUND(AVG("PedidoTiempoSeleccionClienteMs") / 1000.0, 1) as seleccion_cliente_seg'),
+                DB::raw('ROUND(AVG("PedidoTiempoCargaProductosMs") / 1000.0, 1) as carga_productos_seg'),
+                DB::raw('ROUND(AVG("PedidoTiempoValidacionStockMs") / 1000.0, 1) as validacion_stock_seg'),
+                DB::raw('ROUND(AVG("PedidoTiempoConfirmacionPagoMs") / 1000.0, 1) as confirmacion_pago_seg'),
+                DB::raw('ROUND(AVG("PedidoTiempoEfectivoSeg"), 1) as tiempo_activo_seg')
             )
             ->first();
 
@@ -1365,11 +1365,11 @@ class DashboardService
             ->where('PedidoEliminado', 'N')
             ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
             ->select(
-                DB::raw("COALESCE(PedidoTipoCliente, 'RECURRENTE') as tipo_cliente"),
+                DB::raw("COALESCE(\"PedidoTipoCliente\", 'RECURRENTE') as tipo_cliente"),
                 DB::raw("COUNT(*) as total_pedidos"),
-                DB::raw("ROUND(AVG(CASE WHEN PedidoTiempoRegistroSeg > 0 THEN PedidoTiempoRegistroSeg ELSE 135 END), 1) as tiempo_promedio_seg")
+                DB::raw("ROUND(AVG(CASE WHEN \"PedidoTiempoRegistroSeg\" > 0 THEN \"PedidoTiempoRegistroSeg\" ELSE 135 END), 1) as tiempo_promedio_seg")
             )
-            ->groupBy(DB::raw("COALESCE(PedidoTipoCliente, 'RECURRENTE')"))
+            ->groupBy(DB::raw("COALESCE(\"PedidoTipoCliente\", 'RECURRENTE')"))
             ->get();
 
         if ($rows->isEmpty()) {
@@ -1392,7 +1392,7 @@ class DashboardService
             })
             ->select(
                 'p.PedidoId',
-                DB::raw('COUNT(d.Detalle_Pedido_ProductosId) as items'),
+                DB::raw('COUNT(d."Detalle_Pedido_ProductosId") as items'),
                 DB::raw('COALESCE(AVG(l.duration_ms), 1800.0) as avg_duration_ms')
             )
             ->where('p.PedidoEliminado', 'N')
@@ -1433,7 +1433,7 @@ class DashboardService
             ->join('Detalle_Pedido_Productos as d', 'd.Detalle_Pedido_Productos_PedidoId', '=', 'p.PedidoId')
             ->join('Producto as pr', 'pr.ProductoId', '=', 'd.Detalle_Pedido_Productos_ProductoId')
             ->select(
-                DB::raw("COALESCE(pr.ProductoZona, 'Zona A - Principal') as zona"),
+                DB::raw("COALESCE(pr.\"ProductoZona\", 'Zona A - Principal') as zona"),
                 DB::raw('ROUND(AVG(l.duration_ms) / 1000.0, 1) as tiempo_promedio_seg')
             )
             ->where('l.tool_name', 'buscar_producto')
@@ -1486,7 +1486,7 @@ class DashboardService
                 DB::raw('CAST(l.created_at AS DATE) as fecha'),
                 'l.duration_ms',
                 'p.PedidoId',
-                DB::raw('COUNT(d.Detalle_Pedido_ProductosId) as item_count')
+                DB::raw('COUNT(d."Detalle_Pedido_ProductosId") as item_count')
             )
             ->where('l.tool_name', 'buscar_producto')
             ->whereBetween('l.created_at', [$inicio, $fin])
@@ -2040,7 +2040,7 @@ class DashboardService
 
             $alertasStock = DB::table('Producto')
                 ->where('ProductoEliminado', 'N')
-                ->whereRaw('ProductoStockActual <= ProductoStockMinimo')
+                ->whereColumn('ProductoStockActual', '<=', 'ProductoStockMinimo')
                 ->count();
 
             // 4. Evolución Semanal (4 Semanas)
@@ -2178,16 +2178,16 @@ class DashboardService
             // 7. Top Causas de Problema (Podio Top 3 con Medallas y Monto S/)
             $causasQuery = DB::table('Pedido')
                 ->select(
-                    DB::raw("COALESCE(PedidoCausaFalloDespacho, PedidoMotivoAnulacion, 'Rechazo voluntario del cliente') as motivo"),
+                    DB::raw("COALESCE(\"PedidoCausaFalloDespacho\", \"PedidoMotivoAnulacion\", 'Rechazo voluntario del cliente') as motivo"),
                     DB::raw('COUNT(*) as cantidad'),
-                    DB::raw('SUM(COALESCE(PedidoTotal, 0)) as monto_riesgo')
+                    DB::raw('SUM(COALESCE("PedidoTotal", 0)) as monto_riesgo')
                 )
                 ->where('PedidoEliminado', 'N')
                 ->where('PedidoEstado_pedido', 'A')
                 ->whereBetween('PedidoFechaCreacion', [$inicio, $fin]);
             if ($canalId) $causasQuery->where('Pedido_canal_pedidoId', $canalId);
 
-            $causasRows = $causasQuery->groupBy(DB::raw("COALESCE(PedidoCausaFalloDespacho, PedidoMotivoAnulacion, 'Rechazo voluntario del cliente')"))
+            $causasRows = $causasQuery->groupBy(DB::raw("COALESCE(\"PedidoCausaFalloDespacho\", \"PedidoMotivoAnulacion\", 'Rechazo voluntario del cliente')"))
                 ->orderByDesc('cantidad')
                 ->limit(3)
                 ->get();
@@ -2962,20 +2962,20 @@ class DashboardService
             $dbRows = $query->get();
         } else {
             $groupCols = $tipo === 'mensual'
-                ? [DB::raw('YEAR(p.PedidoFechaCreacion) as anio'), DB::raw('MONTH(p.PedidoFechaCreacion) as mes')]
-                : [DB::raw('YEAR(p.PedidoFechaCreacion) as anio'), DB::raw('DATEPART(WEEK, p.PedidoFechaCreacion) as semana')];
+                ? [DB::raw('CAST(EXTRACT(YEAR FROM p."PedidoFechaCreacion") AS INTEGER) as anio'), DB::raw('CAST(EXTRACT(MONTH FROM p."PedidoFechaCreacion") AS INTEGER) as mes')]
+                : [DB::raw('CAST(EXTRACT(YEAR FROM p."PedidoFechaCreacion") AS INTEGER) as anio'), DB::raw('CAST(EXTRACT(WEEK FROM p."PedidoFechaCreacion") AS INTEGER) as semana')];
 
             $selectCols = array_merge($groupCols, [
-                DB::raw('COUNT(DISTINCT p.PedidoId) as total_pedidos'),
-                DB::raw('COUNT(DISTINCT p.PedidoId) as total_ordenes'),
-                DB::raw("SUM(CASE WHEN p.PedidoEstado_pedido = 'C' OR p.PedidoEstadoDespacho = 'ENTREGADO' THEN 1 ELSE 0 END) as despachadas_exitosamente"),
-                DB::raw("SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1 ELSE 0 END) as pedidos_con_rotura"),
-                DB::raw("ROUND(SUM(CASE WHEN CAST(COALESCE(p.PedidoTiempoRegistroSeg, 0) AS FLOAT) > 0 THEN CAST(p.PedidoTiempoRegistroSeg AS FLOAT) / 60.0 ELSE 0.75 END), 2) as tiempo_total_min"),
-                DB::raw('COUNT(p.PedidoId) as ordenes_registradas'),
-                DB::raw("ROUND((SUM(CASE WHEN p.PedidoEstado_pedido = 'C' OR p.PedidoEstadoDespacho = 'ENTREGADO' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 2) as pode"),
-                DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 2) as prs"),
-                DB::raw("ROUND((SUM(CASE WHEN CAST(COALESCE(p.PedidoTiempoRegistroSeg, 0) AS FLOAT) > 0 THEN CAST(p.PedidoTiempoRegistroSeg AS FLOAT) / 60.0 ELSE 0.75 END) / NULLIF(COUNT(p.PedidoId), 0)), 2) as tbpp"),
-                DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 4) as promedio_roturas_pedido")
+                DB::raw('COUNT(DISTINCT p."PedidoId") as total_pedidos'),
+                DB::raw('COUNT(DISTINCT p."PedidoId") as total_ordenes'),
+                DB::raw("SUM(CASE WHEN p.\"PedidoEstado_pedido\" = 'C' OR p.\"PedidoEstadoDespacho\" = 'ENTREGADO' THEN 1 ELSE 0 END) as despachadas_exitosamente"),
+                DB::raw("SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.\"PedidoMotivoAnulacion\" = 'FALTA_STOCK' THEN 1 ELSE 0 END) as pedidos_con_rotura"),
+                DB::raw("ROUND(SUM(CASE WHEN CAST(COALESCE(p.\"PedidoTiempoRegistroSeg\", 0) AS NUMERIC) > 0 THEN CAST(p.\"PedidoTiempoRegistroSeg\" AS NUMERIC) / 60.0 ELSE 0.75 END), 2) as tiempo_total_min"),
+                DB::raw('COUNT(p."PedidoId") as ordenes_registradas'),
+                DB::raw("ROUND((SUM(CASE WHEN p.\"PedidoEstado_pedido\" = 'C' OR p.\"PedidoEstadoDespacho\" = 'ENTREGADO' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.\"PedidoId\"), 0)), 2) as pode"),
+                DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.\"PedidoMotivoAnulacion\" = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.\"PedidoId\"), 0)), 2) as prs"),
+                DB::raw("ROUND((SUM(CASE WHEN CAST(COALESCE(p.\"PedidoTiempoRegistroSeg\", 0) AS NUMERIC) > 0 THEN CAST(p.\"PedidoTiempoRegistroSeg\" AS NUMERIC) / 60.0 ELSE 0.75 END) / NULLIF(COUNT(p.\"PedidoId\"), 0)), 2) as tbpp"),
+                DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.\"PedidoMotivoAnulacion\" = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) / NULLIF(COUNT(DISTINCT p.\"PedidoId\"), 0)), 4) as promedio_roturas_pedido")
             ]);
 
             $query = DB::table('Pedido as p')
@@ -2983,12 +2983,12 @@ class DashboardService
                 ->select($selectCols)
                 ->where('p.PedidoEliminado', 'N')
                 ->where('p.Pedido_canal_pedidoId', $canalId)
-                ->whereRaw('YEAR(p.PedidoFechaCreacion) = ?', [$anio]);
+                ->whereRaw('EXTRACT(YEAR FROM p."PedidoFechaCreacion") = ?', [$anio]);
 
             if ($tipo === 'mensual') {
-                $query->groupBy(DB::raw('YEAR(p.PedidoFechaCreacion)'), DB::raw('MONTH(p.PedidoFechaCreacion)'))->orderBy(DB::raw('MONTH(p.PedidoFechaCreacion)'), 'asc');
+                $query->groupBy(DB::raw('EXTRACT(YEAR FROM p."PedidoFechaCreacion")'), DB::raw('EXTRACT(MONTH FROM p."PedidoFechaCreacion")'))->orderBy(DB::raw('EXTRACT(MONTH FROM p."PedidoFechaCreacion")'), 'asc');
             } else {
-                $query->groupBy(DB::raw('YEAR(p.PedidoFechaCreacion)'), DB::raw('DATEPART(WEEK, p.PedidoFechaCreacion)'))->orderBy(DB::raw('DATEPART(WEEK, p.PedidoFechaCreacion)'), 'asc');
+                $query->groupBy(DB::raw('EXTRACT(YEAR FROM p."PedidoFechaCreacion")'), DB::raw('EXTRACT(WEEK FROM p."PedidoFechaCreacion")'))->orderBy(DB::raw('EXTRACT(WEEK FROM p."PedidoFechaCreacion")'), 'asc');
             }
 
             $dbRows = $query->get();
@@ -3080,31 +3080,34 @@ class DashboardService
      */
     public function getDetalleDiarioPorSemana(int $anio, int $semana, ?string $canalId = null): array
     {
+        $inicioSemana = Carbon::now()->setISODate($anio, $semana)->startOfWeek()->format('Y-m-d 00:00:00');
+        $finSemana = Carbon::now()->setISODate($anio, $semana)->endOfWeek()->format('Y-m-d 23:59:59');
+
         if (empty($canalId)) {
             $diasRaw = DB::table('v_indicadores_diarios')
-                ->whereRaw('YEAR(fecha) = ? AND DATEPART(WEEK, fecha) = ?', [$anio, $semana])
+                ->whereBetween('fecha', [substr($inicioSemana, 0, 10), substr($finSemana, 0, 10)])
                 ->orderBy('fecha', 'asc')
                 ->get();
         } else {
             $diasRaw = DB::table('Pedido as p')
                 ->leftJoin(DB::raw('(SELECT pedido_id, COUNT(*) as cant_roturas FROM detalle_rotura_stock GROUP BY pedido_id) as r'), 'p.PedidoId', '=', 'r.pedido_id')
                 ->select(
-                    DB::raw('CAST(p.PedidoFechaCreacion AS DATE) as fecha'),
-                    DB::raw('COUNT(DISTINCT p.PedidoId) as total_pedidos'),
-                    DB::raw('COUNT(DISTINCT p.PedidoId) as total_ordenes'),
-                    DB::raw("SUM(CASE WHEN p.PedidoEstado_pedido = 'C' OR p.PedidoEstadoDespacho = 'ENTREGADO' THEN 1 ELSE 0 END) as despachadas_exitosamente"),
-                    DB::raw("SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1 ELSE 0 END) as pedidos_con_rotura"),
-                    DB::raw("ROUND(SUM(CASE WHEN CAST(COALESCE(p.PedidoTiempoRegistroSeg, 0) AS FLOAT) > 0 THEN CAST(p.PedidoTiempoRegistroSeg AS FLOAT) / 60.0 ELSE 0.75 END), 2) as tiempo_total_min"),
-                    DB::raw('COUNT(p.PedidoId) as ordenes_registradas'),
-                    DB::raw("ROUND((SUM(CASE WHEN p.PedidoEstado_pedido = 'C' OR p.PedidoEstadoDespacho = 'ENTREGADO' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 2) as pode"),
-                    DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 2) as prs"),
-                    DB::raw("ROUND((SUM(CASE WHEN CAST(COALESCE(p.PedidoTiempoRegistroSeg, 0) AS FLOAT) > 0 THEN CAST(p.PedidoTiempoRegistroSeg AS FLOAT) / 60.0 ELSE 0.75 END) / NULLIF(COUNT(p.PedidoId), 0)), 2) as tbpp"),
-                    DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.PedidoMotivoAnulacion = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) / NULLIF(COUNT(DISTINCT p.PedidoId), 0)), 4) as promedio_roturas_pedido")
+                    DB::raw('CAST(p."PedidoFechaCreacion" AS DATE) as fecha'),
+                    DB::raw('COUNT(DISTINCT p."PedidoId") as total_pedidos'),
+                    DB::raw('COUNT(DISTINCT p."PedidoId") as total_ordenes'),
+                    DB::raw("SUM(CASE WHEN p.\"PedidoEstado_pedido\" = 'C' OR p.\"PedidoEstadoDespacho\" = 'ENTREGADO' THEN 1 ELSE 0 END) as despachadas_exitosamente"),
+                    DB::raw("SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.\"PedidoMotivoAnulacion\" = 'FALTA_STOCK' THEN 1 ELSE 0 END) as pedidos_con_rotura"),
+                    DB::raw("ROUND(SUM(CASE WHEN CAST(COALESCE(p.\"PedidoTiempoRegistroSeg\", 0) AS NUMERIC) > 0 THEN CAST(p.\"PedidoTiempoRegistroSeg\" AS NUMERIC) / 60.0 ELSE 0.75 END), 2) as tiempo_total_min"),
+                    DB::raw('COUNT(p."PedidoId") as ordenes_registradas'),
+                    DB::raw("ROUND((SUM(CASE WHEN p.\"PedidoEstado_pedido\" = 'C' OR p.\"PedidoEstadoDespacho\" = 'ENTREGADO' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.\"PedidoId\"), 0)), 2) as pode"),
+                    DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.\"PedidoMotivoAnulacion\" = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) * 100.0 / NULLIF(COUNT(DISTINCT p.\"PedidoId\"), 0)), 2) as prs"),
+                    DB::raw("ROUND((SUM(CASE WHEN CAST(COALESCE(p.\"PedidoTiempoRegistroSeg\", 0) AS NUMERIC) > 0 THEN CAST(p.\"PedidoTiempoRegistroSeg\" AS NUMERIC) / 60.0 ELSE 0.75 END) / NULLIF(COUNT(p.\"PedidoId\"), 0)), 2) as tbpp"),
+                    DB::raw("ROUND((SUM(CASE WHEN r.pedido_id IS NOT NULL OR p.\"PedidoMotivoAnulacion\" = 'FALTA_STOCK' THEN 1.0 ELSE 0.0 END) / NULLIF(COUNT(DISTINCT p.\"PedidoId\"), 0)), 4) as promedio_roturas_pedido")
                 )
                 ->where('p.PedidoEliminado', 'N')
                 ->where('p.Pedido_canal_pedidoId', $canalId)
-                ->whereRaw('YEAR(p.PedidoFechaCreacion) = ? AND DATEPART(WEEK, p.PedidoFechaCreacion) = ?', [$anio, $semana])
-                ->groupBy(DB::raw('CAST(p.PedidoFechaCreacion AS DATE)'))
+                ->whereBetween('p.PedidoFechaCreacion', [$inicioSemana, $finSemana])
+                ->groupBy(DB::raw('CAST(p."PedidoFechaCreacion" AS DATE)'))
                 ->orderBy('fecha', 'asc')
                 ->get();
         }
@@ -3199,9 +3202,12 @@ class DashboardService
      */
     public function getSemanasDelAnio(int $anio): array
     {
+        $inicioAnio = "{$anio}-01-01";
+        $finAnio = "{$anio}-12-31";
+
         $semanas = DB::table('v_indicadores_diarios')
-            ->select(DB::raw('DISTINCT DATEPART(WEEK, fecha) as semana'))
-            ->whereRaw('YEAR(fecha) = ?', [$anio])
+            ->select(DB::raw('DISTINCT CAST(EXTRACT(WEEK FROM fecha) AS INTEGER) as semana'))
+            ->whereBetween('fecha', [$inicioAnio, $finAnio])
             ->orderBy('semana', 'asc')
             ->pluck('semana')
             ->map(fn($s) => (int)$s)

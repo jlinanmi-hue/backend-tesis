@@ -13,6 +13,18 @@ class UpdateClienteRequest extends FormRequest
         return true;
     }
 
+    protected function prepareForValidation(): void
+    {
+        if ($this->has('ClienteOrigen') && !is_null($this->input('ClienteOrigen'))) {
+            $origen = trim((string) $this->input('ClienteOrigen'));
+            if (strcasecmp($origen, 'whatsapp') === 0) {
+                $this->merge(['ClienteOrigen' => 'WhatsApp']);
+            } elseif (strcasecmp($origen, 'tienda') === 0) {
+                $this->merge(['ClienteOrigen' => 'Tienda']);
+            }
+        }
+    }
+
     public function rules(): array
     {
         $clienteId = $this->route('id') ?? $this->route('cliente') ?? $this->id;
@@ -53,6 +65,13 @@ class UpdateClienteRequest extends FormRequest
                 'size:1',
                 Rule::in(['A', 'I']),
             ],
+            'ClienteOrigen' => [
+                'sometimes',
+                'nullable',
+                'string',
+                'max:20',
+                Rule::in(['Tienda', 'WhatsApp']),
+            ],
         ];
     }
 
@@ -78,6 +97,10 @@ class UpdateClienteRequest extends FormRequest
 
             'ClienteEstado.size' => 'El estado debe tener exactamente 1 carácter.',
             'ClienteEstado.in' => 'El estado solo acepta A (Activo) o I (Inactivo).',
+
+            'ClienteOrigen.string' => 'El origen debe ser una cadena de texto.',
+            'ClienteOrigen.max' => 'El origen no puede superar los 20 caracteres.',
+            'ClienteOrigen.in' => 'El origen del cliente debe ser Tienda o WhatsApp.',
         ];
     }
 }

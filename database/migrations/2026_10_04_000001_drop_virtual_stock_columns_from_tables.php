@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -20,37 +21,43 @@ return new class extends Migration
                 continue;
             }
 
-            // 1. Eliminar DEFAULT constraints dinámicamente
-            $constraints = DB::select("
-                SELECT dc.name AS constraint_name
-                FROM sys.default_constraints dc
-                INNER JOIN sys.columns c
-                    ON c.default_object_id = dc.object_id
-                INNER JOIN sys.tables t
-                    ON t.object_id = c.object_id
-                WHERE t.name = ? AND c.name = ?
-            ", [$tabla, $columna]);
+            if (DB::getDriverName() === 'sqlsrv') {
+                // 1. Eliminar DEFAULT constraints dinámicamente
+                $constraints = DB::select("
+                    SELECT dc.name AS constraint_name
+                    FROM sys.default_constraints dc
+                    INNER JOIN sys.columns c
+                        ON c.default_object_id = dc.object_id
+                    INNER JOIN sys.tables t
+                        ON t.object_id = c.object_id
+                    WHERE t.name = ? AND c.name = ?
+                ", [$tabla, $columna]);
 
-            foreach ($constraints as $c) {
-                DB::statement("ALTER TABLE [{$tabla}] DROP CONSTRAINT [{$c->constraint_name}]");
+                foreach ($constraints as $c) {
+                    DB::statement("ALTER TABLE [{$tabla}] DROP CONSTRAINT [{$c->constraint_name}]");
+                }
+
+                // 2. Eliminar índices asociados (si existen)
+                $indices = DB::select("
+                    SELECT i.name AS index_name
+                    FROM sys.indexes i
+                    INNER JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+                    INNER JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+                    INNER JOIN sys.tables t ON t.object_id = i.object_id
+                    WHERE t.name = ? AND c.name = ? AND i.is_primary_key = 0 AND i.is_unique_constraint = 0
+                ", [$tabla, $columna]);
+
+                foreach ($indices as $idx) {
+                    DB::statement("DROP INDEX [{$idx->index_name}] ON [{$tabla}]");
+                }
+
+                // 3. Drop column
+                DB::statement("ALTER TABLE [{$tabla}] DROP COLUMN [{$columna}]");
+            } else {
+                Schema::table($tabla, function (Blueprint $table) use ($columna) {
+                    $table->dropColumn($columna);
+                });
             }
-
-            // 2. Eliminar índices asociados (si existen)
-            $indices = DB::select("
-                SELECT i.name AS index_name
-                FROM sys.indexes i
-                INNER JOIN sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
-                INNER JOIN sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
-                INNER JOIN sys.tables t ON t.object_id = i.object_id
-                WHERE t.name = ? AND c.name = ? AND i.is_primary_key = 0 AND i.is_unique_constraint = 0
-            ", [$tabla, $columna]);
-
-            foreach ($indices as $idx) {
-                DB::statement("DROP INDEX [{$idx->index_name}] ON [{$tabla}]");
-            }
-
-            // 3. Drop column
-            DB::statement("ALTER TABLE [{$tabla}] DROP COLUMN [{$columna}]");
         }
     }
 

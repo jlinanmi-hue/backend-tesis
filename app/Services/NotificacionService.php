@@ -18,7 +18,7 @@ class NotificacionService
         $last = DB::table('Notificacion')
             ->select('NotificacionId')
             ->where('NotificacionId', 'like', 'NOT-%')
-            ->orderByRaw('LEN(NotificacionId) DESC, NotificacionId DESC')
+            ->orderByRaw('LENGTH(RTRIM(COALESCE("NotificacionId", \'\'))) DESC, "NotificacionId" DESC')
             ->first();
 
         if (!$last) {
@@ -239,9 +239,10 @@ class NotificacionService
     /**
      * Obtener eventos recientes directamente de la base de datos para el streaming SSE
      */
-    public function obtenerEventosRecientes(int $limit = 20): array
+    public function obtenerEventosRecientes(int $limit = 20, ?string $usuarioId = null): array
     {
         return Notificacion::activas()
+            ->paraUsuario($usuarioId)
             ->orderBy('NotificacionFecha', 'desc')
             ->take($limit)
             ->get()
@@ -284,8 +285,8 @@ class NotificacionService
             'flujo_origen' => "OC: {$ordenId}",
             'flujo_destino' => 'Almacén Central',
             'flujo_indicador' => "+{$cantStr} UND",
-            'accion_texto' => 'Ver Órdenes de Compra',
-            'accion_url' => '/ordenes-compra',
+            'accion_texto' => 'Ver Movimientos en Kárdex',
+            'accion_url' => "/inventario/movimientos?producto={$producto->ProductoId}",
         ]);
     }
 

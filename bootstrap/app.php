@@ -15,6 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'deferred.access' => \App\Http\Middleware\CheckDeferredAccess::class,
+            'verify.whatsapp' => \App\Http\Middleware\VerifyWhatsAppToken::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

@@ -2,8 +2,11 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\EnviarNotificacionManualRequest;
+use App\Services\NotificacionManualService;
 use App\Services\NotificacionService;
 use Exception;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -12,7 +15,8 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 class NotificacionController extends Controller
 {
     public function __construct(
-        protected NotificacionService $notificacionService
+        protected NotificacionService $notificacionService,
+        protected NotificacionManualService $notificacionManualService
     ) {}
 
     /**
@@ -144,7 +148,7 @@ class NotificacionController extends Controller
      */
     public function stream(Request $request): StreamedResponse
     {
-        $response = new StreamedResponse(function () {
+        $response = new StreamedResponse(function () use ($request) {
             // Deshabilitar buffering de salida en PHP
             if (ob_get_level()) {
                 ob_end_clean();
@@ -157,7 +161,10 @@ class NotificacionController extends Controller
             $tiempoFin = time() + 25;
 
             while (time() < $tiempoFin) {
-                $eventos = $this->notificacionService->obtenerEventosRecientes(10);
+                $eventos = $this->notificacionService->obtenerEventosRecientes(
+                    10,
+                    $request->input('usuario_id')
+                );
 
                 if (!empty($eventos)) {
                     $ultimoEvento = $eventos[0];
@@ -213,15 +220,15 @@ class NotificacionController extends Controller
                 'badge_color' => $silenciosa ? '#3B82F6' : '#F59E0B',
                 'badge_icono' => $silenciosa ? 'volume_off' : 'notifications_active',
                 'flujo_origen' => 'Servidor Backend',
-                'flujo_destino' => 'Dashboard Frontend',
+                'flujo_destino' => ($tipo === 'warning' ? 'Gestión de Compras' : ($tipo === 'success' ? 'Almacén Central' : 'Control de Mermas')),
                 'flujo_indicador' => 'Conexión SSE OK',
                 'impacto_financiero' => [
                     'costo_total_perdido' => 25.50,
                     'venta_total_perdida' => 32.00,
                     'moneda' => 'S/',
                 ],
-                'accion_texto' => 'Ver Dashboard',
-                'accion_url' => '/dashboard',
+                'accion_texto' => ($tipo === 'warning' ? 'Generar Orden de Compra' : ($tipo === 'success' ? 'Ver Movimientos en Kárdex' : ($tipo === 'merma' ? 'Ver Mermas y Ajustes' : 'Ver Indicadores'))),
+                'accion_url' => ($tipo === 'warning' ? '/ordenes-compra/crear?producto=PROD-00001&cantidad=50' : ($tipo === 'success' ? '/inventario/movimientos' : ($tipo === 'merma' ? '/inventario/ajustes' : '/indicadores'))),
             ]);
 
             return response()->json([
@@ -233,6 +240,78 @@ class NotificacionController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Error al emitir notificación de prueba: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Enviar una notificación manual segmentada (usuarios / roles / todos).
+     */
+    public function enviarManual(EnviarNotificacionManualRequest $request): JsonResponse
+    {
+        try {
+            $resultado = $this->notificacionManualService->enviar($request->validated());
+
+            return response()->json([
+                'success' => true,
+                'data' => $resultado,
+                'message' => "Notificación enviada a {$resultado['enviadas']} usuario(s).",
+            ], 201);
+        } catch (AuthorizationException $e) {
+            return response()->json([
+                'success' => false,
+                'data' => null,
+                'message' => $e->getMessage(),
+            ], 403);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'data' => null,
+                'message' => 'Error al enviar la notificación: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Catálogo de motivos, prioridades y roles para el compositor.
+     */
+    public function motivos(): JsonResponse
+    {
+        try {
+            return response()->json([
+                'success' => true,
+                'data' => $this->notificacionManualService->catalogo(),
+                'message' => 'Catálogo de notificaciones manuales obtenido correctamente.',
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'data' => null,
+                'message' => 'Error al obtener el catálogo: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Búsqueda de usuarios activos para el selector de destinatarios.
+     */
+    public function buscarUsuarios(Request $request): JsonResponse
+    {
+        try {
+            $termino = (string) $request->input('q', '');
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'usuarios' => $this->notificacionManualService->buscarUsuarios($termino),
+                ],
+                'message' => 'Usuarios encontrados.',
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'data' => null,
+                'message' => 'Error al buscar usuarios: ' . $e->getMessage(),
             ], 500);
         }
     }
