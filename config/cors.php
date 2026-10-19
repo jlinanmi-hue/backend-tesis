@@ -33,6 +33,8 @@ return [
 
     'allowed_origins_patterns' => [
         '#^http://(localhost|127\.0\.0\.1)(:\d+)?$#',
+        '#^https?://.*\.vercel\.app$#',
+        '#^https?://.*\.onrender\.com$#',
     ],
 
     'allowed_headers' => ['*'],
