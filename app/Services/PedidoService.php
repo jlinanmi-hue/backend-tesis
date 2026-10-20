@@ -59,7 +59,7 @@ class PedidoService
      */
     public function crearPedido(array $datos): Pedido
     {
-        return DB::transaction(function () use ($datos) {
+        $pedido = DB::transaction(function () use ($datos) {
             // 1. Validar cliente
             $clienteId = !empty($datos['cliente_id']) 
                 ? trim($datos['cliente_id']) 
@@ -286,10 +286,14 @@ class PedidoService
                 ?? 'ADMIN';
 
             $origenIA = 'N';
-            if (isset($datos['origen_ia'])) {
-                $origenIA = filter_var($datos['origen_ia'], FILTER_VALIDATE_BOOLEAN) ? 'S' : 'N';
-            } elseif (!empty($datos['PedidoOrigenIA'])) {
-                $origenIA = in_array(strtoupper((string) $datos['PedidoOrigenIA']), ['S', '1', 'TRUE']) ? 'S' : 'N';
+            $rawOrigen = $datos['origen_ia'] ?? $datos['PedidoOrigenIA'] ?? null;
+            if ($rawOrigen !== null) {
+                if (is_bool($rawOrigen)) {
+                    $origenIA = $rawOrigen ? 'S' : 'N';
+                } else {
+                    $str = strtoupper(trim((string)$rawOrigen));
+                    $origenIA = in_array($str, ['S', 'SI', 'SÍ', '1', 'TRUE', 'YES', 'Y'], true) ? 'S' : 'N';
+                }
             }
 
             // Telemetría para Indicador 4 (TBPP)
@@ -437,6 +441,10 @@ class PedidoService
 
             return $pedido->fresh(['cliente', 'canalPedido', 'zonaDelivery', 'detalles.producto', 'detalles.unidadMedida']);
         });
+
+        $this->invalidarCacheDashboard();
+
+        return $pedido;
     }
 
     /**
@@ -444,7 +452,7 @@ class PedidoService
      */
     public function actualizarPedido(string $id, array $datos): Pedido
     {
-        return DB::transaction(function () use ($id, $datos) {
+        $pedido = DB::transaction(function () use ($id, $datos) {
             $pedido = $this->obtenerPedidoPorId($id);
 
             if (!$pedido->estaPendiente()) {
@@ -818,6 +826,10 @@ class PedidoService
 
             return $pedido->fresh(['cliente', 'canalPedido', 'zonaDelivery', 'detalles.producto', 'detalles.unidadMedida']);
         });
+
+        $this->invalidarCacheDashboard();
+
+        return $pedido;
     }
 
     protected function agregarProductoAlPedido(Pedido $pedido, string $prodId, float $cant, ?string $unidadId, ?float $factor, ?float $precio): void
@@ -1035,6 +1047,8 @@ class PedidoService
             'PedidoUsuarioDespacho'=> $usuarioDespacho,
         ]);
 
+        $this->invalidarCacheDashboard();
+
         return $pedido;
     }
 
@@ -1043,7 +1057,7 @@ class PedidoService
      */
     public function cancelarPedido(string $id, ?string $motivo = null, array $datos = []): Pedido
     {
-        return DB::transaction(function () use ($id, $motivo, $datos) {
+        $pedido = DB::transaction(function () use ($id, $motivo, $datos) {
             $pedido = $this->obtenerPedidoPorId($id);
 
             if ($pedido->estaCancelada()) {
@@ -1149,6 +1163,10 @@ class PedidoService
 
             return $pedido;
         });
+
+        $this->invalidarCacheDashboard();
+
+        return $pedido;
     }
 
     /**
@@ -1183,7 +1201,7 @@ class PedidoService
      */
     public function eliminarPedido(string $id): bool
     {
-        return DB::transaction(function () use ($id) {
+        $eliminado = DB::transaction(function () use ($id) {
             $pedido = $this->obtenerPedidoPorId($id);
 
             if (!$pedido->estaPendiente()) {
@@ -1197,6 +1215,10 @@ class PedidoService
 
             return $this->pedidoRepository->delete($id);
         });
+
+        $this->invalidarCacheDashboard();
+
+        return $eliminado;
     }
 
     /**
@@ -1359,5 +1381,36 @@ class PedidoService
     {
         $fecha = $fecha ? \Carbon\Carbon::parse($fecha)->toDateString() : now()->toDateString();
         return $this->pedidoRepository->getDaily($fecha, $perPage);
+    }
+
+    /**
+     * Invalida las claves de caché del Dashboard para reflejar cambios en tiempo real.
+     */
+    public function invalidarCacheDashboard(): void
+    {
+        try {
+            $mesActual = now()->format('Y-m');
+            $mesAnterior = now()->subMonth()->format('Y-m');
+            $semanaActual = now()->format('Y-\WW');
+            $semanaAnterior = now()->subWeek()->format('Y-\WW');
+
+            \Illuminate\Support\Facades\Cache::forget("dashboard:pode:{$mesActual}");
+            \Illuminate\Support\Facades\Cache::forget("dashboard:pode:{$mesAnterior}");
+            \Illuminate\Support\Facades\Cache::forget("dashboard:peor:{$mesActual}");
+            \Illuminate\Support\Facades\Cache::forget("dashboard:peor:{$mesAnterior}");
+            \Illuminate\Support\Facades\Cache::forget("dashboard:prs:{$semanaActual}");
+            \Illuminate\Support\Facades\Cache::forget("dashboard:prs:{$semanaAnterior}");
+            \Illuminate\Support\Facades\Cache::forget("dashboard:tbpp:{$mesActual}");
+            \Illuminate\Support\Facades\Cache::forget("dashboard:tbpp:{$mesAnterior}");
+
+            foreach ([1, 7, 15, 30] as $dias) {
+                \Illuminate\Support\Facades\Cache::forget("dashboard:ejecutivo:dias_{$dias}:c_:z_");
+                foreach (['CNL-00001', 'CNL-00002', 'CNL-00003'] as $canal) {
+                    \Illuminate\Support\Facades\Cache::forget("dashboard:ejecutivo:dias_{$dias}:c_{$canal}:z_");
+                }
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("No se pudo invalidar caché de dashboard: {$e->getMessage()}");
+        }
     }
 }

@@ -297,6 +297,8 @@ class DespachoService
             Log::info("DespachoService: Despacho COMPLETO — Pedido {$pedidoId} por {$usuario}");
         });
 
+        app(\App\Services\PedidoService::class)->invalidarCacheDashboard();
+
         return DB::table('Pedido')->where('PedidoId', $pedidoId)->first();
     }
 
@@ -422,6 +424,8 @@ class DespachoService
             Log::info("DespachoService: Despacho CON_FALTANTE — Pedido {$pedidoId} por {$usuario}. Total despachado: {$totalDespachado}");
         });
 
+        app(\App\Services\PedidoService::class)->invalidarCacheDashboard();
+
         return DB::table('Pedido')->where('PedidoId', $pedidoId)->first();
     }
 
@@ -514,6 +518,8 @@ class DespachoService
 
             Log::info("DespachoService: Despacho RECHAZADO — Pedido {$pedidoId} por {$usuario}. Motivo: {$motivo}");
         });
+
+        app(\App\Services\PedidoService::class)->invalidarCacheDashboard();
 
         return DB::table('Pedido')->where('PedidoId', $pedidoId)->first();
     }

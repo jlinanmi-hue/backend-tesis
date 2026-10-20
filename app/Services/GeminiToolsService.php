@@ -900,6 +900,17 @@ class GeminiToolsService
         }
 
         if (empty($candidatos)) {
+            // Fallback: Si no se encontró por frase completa, intentar con la primera palabra clave (ej: marca "pepsi" de "Pepsi de 3 L")
+            $tokens = preg_split('/\s+/', preg_replace('/[^\p{L}\p{N}]+/u', ' ', mb_strtolower($prodIdent, 'UTF-8')));
+            $stop = ['de', 'del', 'en', 'para', 'con', 'sin', 'un', 'una', 'el', 'la', 'los', 'las', 'y', 'litro', 'litros', 'botella', 'paquete', 'caja', 'por', 'favor', 'pedido'];
+            $keyTokens = array_filter($tokens, fn($t) => strlen($t) >= 3 && !in_array($t, $stop, true));
+            if (!empty($keyTokens)) {
+                $firstKey = reset($keyTokens);
+                $candidatos = $this->inventarioService->buscarProductosRapido($firstKey, 10);
+            }
+        }
+
+        if (empty($candidatos)) {
             return [
                 'status'  => 'not_found',
                 'message' => "No se encontró ningún producto que coincida con '{$prodIdent}'.",

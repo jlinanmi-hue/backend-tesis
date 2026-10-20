@@ -151,8 +151,8 @@ class DashboardService
         $query = DB::table('Pedido')
             ->select(
                 DB::raw('CAST("PedidoFechaCreacion" AS DATE) as fecha'),
-                DB::raw("SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN 1 ELSE 0 END) as exitosas"),
-                DB::raw("SUM(CASE WHEN \"PedidoEstado_pedido\" = 'A' THEN 1 ELSE 0 END) as fallidas"),
+                DB::raw("SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' AND COALESCE(\"PedidoTieneError\", 'N') = 'N' AND COALESCE(\"PedidoTieneFaltante\", 'N') = 'N' AND (\"PedidoEstadoDespacho\" IS NULL OR \"PedidoEstadoDespacho\" = 'ENTREGADO_COMPLETO') THEN 1 ELSE 0 END) as exitosas"),
+                DB::raw("SUM(CASE WHEN \"PedidoEstado_pedido\" = 'A' OR \"PedidoTieneError\" = 'S' OR COALESCE(\"PedidoTieneFaltante\", 'N') = 'S' OR \"PedidoEstadoDespacho\" IN ('ENTREGADO_CON_FALTANTE', 'RECHAZADO', 'DEVUELTO', 'INCIDENCIA') THEN 1 ELSE 0 END) as fallidas"),
                 DB::raw("SUM(CASE WHEN \"PedidoEstado_pedido\" = 'P' THEN 1 ELSE 0 END) as pendientes")
             )
             ->where('PedidoEliminado', 'N')
@@ -1961,7 +1961,7 @@ class DashboardService
 
         $cacheKey = "dashboard:ejecutivo:dias_{$dias}:c_{$canalId}:z_{$zonaId}";
 
-        return Cache::remember($cacheKey, 120, function () use ($dias, $canalId, $zonaId, $filters) {
+        return Cache::remember($cacheKey, 30, function () use ($dias, $canalId, $zonaId, $filters) {
             $fin = now()->endOfDay();
             $inicio = now()->subDays(max(1, $dias) - 1)->startOfDay();
 
@@ -2163,31 +2163,60 @@ class DashboardService
 
             // 6. Calendario de Dificultades (Día a Día del período)
             $diasDetalle = $this->getOrdersByDay($inicio, $fin, $filters);
-            $calendarioDificultades = array_map(function ($dia) {
-                $fallos = (int) ($dia['fallidas'] ?? 0);
-                $estado = $fallos === 0 ? 'OPTIMO' : ($fallos === 1 ? 'ALERTA' : 'CRITICO');
+
+            // Dificultades adicionales de IA (fallos de tools y feedback negativo de usuarios por fecha)
+            $aiErrorsByDay = DB::table('ai_tool_logs')
+                ->select(DB::raw('CAST(created_at AS DATE) as fecha'), DB::raw('COUNT(*) as total'))
+                ->where('status', 'error')
+                ->whereBetween('created_at', [$inicio, $fin])
+                ->groupBy(DB::raw('CAST(created_at AS DATE)'))
+                ->pluck('total', 'fecha')
+                ->toArray();
+
+            $aiDislikesByDay = DB::table('ai_generation_feedback')
+                ->select(DB::raw('CAST(created_at AS DATE) as fecha'), DB::raw('COUNT(*) as total'))
+                ->where('rating', 'dislike')
+                ->whereBetween('created_at', [$inicio, $fin])
+                ->groupBy(DB::raw('CAST(created_at AS DATE)'))
+                ->pluck('total', 'fecha')
+                ->toArray();
+
+            $calendarioDificultades = array_map(function ($dia) use ($aiErrorsByDay, $aiDislikesByDay) {
+                $fStr = $dia['fecha'];
+                $fallosPedidos = (int) ($dia['fallidas'] ?? 0);
+                $fallosIa = (int) ($aiErrorsByDay[$fStr] ?? 0);
+                $dislikes = (int) ($aiDislikesByDay[$fStr] ?? 0);
+                $totalFallos = $fallosPedidos + $fallosIa + $dislikes;
+
+                $estado = $totalFallos === 0 ? 'OPTIMO' : ($totalFallos === 1 ? 'ALERTA' : 'CRITICO');
                 return [
-                    'fecha'      => $dia['fecha'],
-                    'dia_nombre' => $dia['dia_nombre'] ?? $dia['fecha'],
-                    'pedidos'    => (int) ($dia['total'] ?? 0),
-                    'fallos'     => $fallos,
-                    'estado'     => $estado,
+                    'fecha'          => $dia['fecha'],
+                    'dia_nombre'     => $dia['dia_nombre'] ?? $dia['fecha'],
+                    'pedidos'        => (int) ($dia['total'] ?? 0),
+                    'fallos'         => $totalFallos,
+                    'fallos_pedidos' => $fallosPedidos,
+                    'fallos_ia'      => $fallosIa + $dislikes,
+                    'estado'         => $estado,
                 ];
             }, $diasDetalle);
 
             // 7. Top Causas de Problema (Podio Top 3 con Medallas y Monto S/)
             $causasQuery = DB::table('Pedido')
                 ->select(
-                    DB::raw("COALESCE(\"PedidoCausaFalloDespacho\", \"PedidoMotivoAnulacion\", 'Rechazo voluntario del cliente') as motivo"),
+                    DB::raw("COALESCE(\"PedidoCausaFalloDespacho\", \"PedidoMotivoAnulacion\", CASE WHEN \"PedidoTieneFaltante\" = 'S' THEN 'Despacho con faltante de stock' ELSE 'Rechazo voluntario del cliente' END) as motivo"),
                     DB::raw('COUNT(*) as cantidad'),
                     DB::raw('SUM(COALESCE("PedidoTotal", 0)) as monto_riesgo')
                 )
                 ->where('PedidoEliminado', 'N')
-                ->where('PedidoEstado_pedido', 'A')
+                ->where(function ($q) {
+                    $q->where('PedidoEstado_pedido', 'A')
+                      ->orWhere('PedidoTieneFaltante', 'S')
+                      ->orWhere('PedidoTieneError', 'S');
+                })
                 ->whereBetween('PedidoFechaCreacion', [$inicio, $fin]);
             if ($canalId) $causasQuery->where('Pedido_canal_pedidoId', $canalId);
 
-            $causasRows = $causasQuery->groupBy(DB::raw("COALESCE(\"PedidoCausaFalloDespacho\", \"PedidoMotivoAnulacion\", 'Rechazo voluntario del cliente')"))
+            $causasRows = $causasQuery->groupBy(DB::raw("COALESCE(\"PedidoCausaFalloDespacho\", \"PedidoMotivoAnulacion\", CASE WHEN \"PedidoTieneFaltante\" = 'S' THEN 'Despacho con faltante de stock' ELSE 'Rechazo voluntario del cliente' END)"))
                 ->orderByDesc('cantidad')
                 ->limit(3)
                 ->get();
