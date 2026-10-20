@@ -1001,6 +1001,190 @@ class GeminiToolsService
         ];
     }
 
+    /**
+     * Valida si un producto cuenta con múltiples presentaciones activas (ej: Unidad vs Paquete de 4)
+     * y el usuario no ha especificado de forma unívoca a cuál se refiere.
+     * Si detecta ambigüedad, devuelve un array de respuesta con status 'ambiguous_presentation'
+     * y chips interactivos para que el usuario elija la presentación adecuada antes de abrir el formulario.
+     */
+    private function verificarAmbiguedadPresentacion(
+        Producto $producto,
+        ?string $unidadId,
+        ?float $factor,
+        ?string $textoTermino,
+        string $modo = 'venta',
+        float $cantidad = 1.0,
+        ?string $entidadNombre = null,
+        string $tipoOperacion = 'pedido'
+    ): ?array {
+        $producto->loadMissing(['detalleProductoMedidas' => function ($q) {
+            $q->where('Detalle_Producto_medidaEliminado', 'N')->with('unidadMedida');
+        }]);
+
+        $medidas = $producto->detalleProductoMedidas
+            ->where('Detalle_Producto_medidaEliminado', 'N')
+            ->values();
+
+        // Si solo tiene 1 presentación (o ninguna configurada), no hay ambigüedad
+        if ($medidas->count() <= 1) {
+            return null;
+        }
+
+        $textoAnalizar = strtolower(trim("{$textoTermino} {$unidadId}"));
+
+        // 1. Si vino factor > 1 explícito (ej: factor 4, factor 6, factor 12)
+        if ($factor !== null && $factor > 1) {
+            $matched = $medidas->first(fn($m) => (int)$m->Detalle_Producto_medida_factor_conversion === (int)$factor);
+            if ($matched) {
+                return null; // Resuelto inequívocamente por factor de conversión
+            }
+        }
+
+        // 2. Si vino unidad_id explícita y NO es la genérica UND-00001 (ej: UND-00005)
+        if (!empty($unidadId) && str_starts_with($unidadId, 'UND-') && $unidadId !== 'UND-00001') {
+            $matched = $medidas->first(fn($m) => $m->Detalle_Producto_medida_unidades_medidaId === $unidadId);
+            if ($matched) {
+                return null; // Resuelto inequívocamente por ID de presentación
+            }
+        }
+
+        // 3. Evaluar palabras clave de empaque (factor > 1) en el texto o unidad
+        $hasPackKeyword = preg_match('/\b(paquete|pack|caja|plancha|sixpack|six-pack|fardo|bolsa|docena|pqt|caj|pln|bls|sx)s?\b/i', $textoAnalizar) === 1;
+
+        if ($hasPackKeyword) {
+            // Si el texto trae número junto al empaque (ej: "paquete x 4", "pack 6", "caja 12")
+            if (preg_match('/(?:x|\*|paquete|pack|caja|bolsa|fardo)\s*(\d+)/i', $textoAnalizar, $numMatch)) {
+                $factorBuscado = (int)$numMatch[1];
+                $matched = $medidas->first(fn($m) => (int)$m->Detalle_Producto_medida_factor_conversion === $factorBuscado);
+                if ($matched) {
+                    return null; // Resuelto por coincidencia con el factor en texto
+                }
+            }
+
+            // Si hay exactamente UNA presentación con factor > 1, resolvemos a esa presentación empaque
+            $empaques = $medidas->filter(fn($m) => (int)$m->Detalle_Producto_medida_factor_conversion > 1);
+            if ($empaques->count() === 1) {
+                return null; // Resuelto al único empaque existente
+            }
+        }
+
+        // 4. Evaluar palabras clave de unidad simple en el texto del usuario
+        $textoUsuario = strtolower(trim($textoTermino ?? ''));
+        $hasUnitKeyword = preg_match('/\b(unidad|unidades|botella|botellas|lata|latas|suelto|suelta|individual|pieza|piezas)\b/i', $textoUsuario) === 1
+            || preg_match('/\b(und|unds)\b/i', $textoUsuario) === 1
+            || strtolower(trim($unidadId ?? '')) === 'unidad'
+            || strtolower(trim($unidadId ?? '')) === 'unidades';
+
+        if ($hasUnitKeyword && !$hasPackKeyword) {
+            return null; // Resuelto inequívocamente a la unidad base
+        }
+
+        // 5. ¡AMBIGÜEDAD DETECTADA! Múltiples presentaciones y el usuario NO aclaró si es unidad o empaque
+        $esVenta = ($modo === 'venta');
+        $chips = [];
+        $lineasDesc = [];
+
+        foreach ($medidas as $m) {
+            $f = (int)$m->Detalle_Producto_medida_factor_conversion;
+            $uId = $m->Detalle_Producto_medida_unidades_medidaId;
+            $uDesc = $m->unidadMedida?->unidades_medidaDescripcionUnidades ?? $m->unidadMedida?->unidades_medidaDescripcion ?? ($f > 1 ? "Paquete x {$f}" : 'Unidad (UND)');
+            $uAbrev = $m->unidadMedida?->unidades_medidaAbreviatura ?? ($f > 1 ? 'PQT' : 'UND');
+            $pPrecio = $esVenta ? (float)$m->Detalle_Producto_medida_precio_venta : (float)$m->Detalle_Producto_medida_precio_compra;
+            $emoji = $f > 1 ? '📦' : '🥤';
+            $factorTxt = $f > 1 ? " (Factor {$f})" : '';
+            $precioTxt = $esVenta ? "S/ " . number_format($pPrecio, 2) . " c/u" : "Costo ref: S/ " . number_format($pPrecio, 2);
+
+            $lineasDesc[] = "• {$emoji} **{$uDesc}**{$factorTxt} — {$precioTxt}";
+
+            $cantStr = $cantidad > 0 ? (rtrim(rtrim(number_format($cantidad, 2), '0'), '.')) : '1';
+
+            if ($tipoOperacion === 'pedido') {
+                $queryChip = !empty($entidadNombre)
+                    ? "Prepara el pedido de {$cantStr} {$uDesc} de {$producto->ProductoNombre} para {$entidadNombre}"
+                    : "Prepara el pedido de {$cantStr} {$uDesc} de {$producto->ProductoNombre}";
+
+                $chips[] = [
+                    'label'    => "{$emoji} {$cantStr} {$uDesc} ({$precioTxt})",
+                    'query'    => $queryChip,
+                    'metadata' => [
+                        'producto_id'             => $producto->ProductoId,
+                        'producto_nombre'         => $producto->ProductoNombre,
+                        'unidad_id'               => $uId,
+                        'factor_conversion'       => $f,
+                        'cantidad'                => $cantidad,
+                        'precio_unitario'         => $pPrecio,
+                        'cliente'                 => $entidadNombre,
+                        'presentacion_confirmada' => true,
+                        'intent'                  => 'abrir_formulario_pedido',
+                    ],
+                ];
+            } else {
+                $queryChip = !empty($entidadNombre)
+                    ? "Prepara la orden de compra de {$cantStr} {$uDesc} de {$producto->ProductoNombre} para {$entidadNombre}"
+                    : "Prepara la orden de compra de {$cantStr} {$uDesc} de {$producto->ProductoNombre}";
+
+                $chips[] = [
+                    'label'  => "{$emoji} {$cantStr} {$uDesc} ({$precioTxt})",
+                    'query'  => $queryChip,
+                    'action' => 'select_purchase_presentation',
+                    'params' => [
+                        'producto_id'             => $producto->ProductoId,
+                        'producto_nombre'         => $producto->ProductoNombre,
+                        'unidad_id'               => $uId,
+                        'factor_conversion'       => $f,
+                        'cantidad'                => $cantidad,
+                        'precio_compra'           => $pPrecio,
+                        'proveedor_nombre'        => $entidadNombre,
+                        'presentacion_confirmada' => true,
+                    ],
+                    'metadata' => [
+                        'producto_id'             => $producto->ProductoId,
+                        'unidad_id'               => $uId,
+                        'factor_conversion'       => $f,
+                        'cantidad'                => $cantidad,
+                        'presentacion_confirmada' => true,
+                        'intent'                  => 'abrir_formulario_orden_compra',
+                    ],
+                ];
+            }
+        }
+
+        $presentacionesTexto = implode("\n", $lineasDesc);
+        $cantStr = $cantidad > 0 ? (rtrim(rtrim(number_format($cantidad, 2), '0'), '.')) : '1';
+
+        if ($tipoOperacion === 'pedido') {
+            $msg = !empty($entidadNombre)
+                ? "El producto **{$producto->ProductoNombre}** cuenta con varias presentaciones disponibles:\n\n{$presentacionesTexto}\n\n¿En cuál presentación deseas registrar las {$cantStr} para **{$entidadNombre}**?"
+                : "El producto **{$producto->ProductoNombre}** cuenta con varias presentaciones disponibles:\n\n{$presentacionesTexto}\n\n¿En cuál presentación deseas registrar las {$cantStr} unidades?";
+        } else {
+            $msg = !empty($entidadNombre)
+                ? "El producto **{$producto->ProductoNombre}** tiene varias presentaciones para compras con **{$entidadNombre}**:\n\n{$presentacionesTexto}\n\n¿En qué presentación deseas generar la orden de compra de las {$cantStr} unidades?"
+                : "El producto **{$producto->ProductoNombre}** tiene varias presentaciones de compra:\n\n{$presentacionesTexto}\n\n¿En qué presentación deseas generar la orden de compra de las {$cantStr} unidades?";
+        }
+
+        return [
+            'success'         => true,
+            'status'          => 'ambiguous_presentation',
+            'producto_id'     => $producto->ProductoId,
+            'producto_nombre' => $producto->ProductoNombre,
+            'chips'           => $chips,
+            'data'            => [
+                'producto_id'     => $producto->ProductoId,
+                'producto_nombre' => $producto->ProductoNombre,
+                'presentaciones'  => $medidas->map(fn($m) => [
+                    'unidad_id'         => $m->Detalle_Producto_medida_unidades_medidaId,
+                    'descripcion'       => $m->unidadMedida?->unidades_medidaDescripcionUnidades ?? $m->unidadMedida?->unidades_medidaDescripcion ?? 'Presentación',
+                    'abreviatura'       => $m->unidadMedida?->unidades_medidaAbreviatura ?? 'UND',
+                    'factor_conversion' => (int)$m->Detalle_Producto_medida_factor_conversion,
+                    'precio_venta'      => (float)$m->Detalle_Producto_medida_precio_venta,
+                    'precio_compra'     => (float)$m->Detalle_Producto_medida_precio_compra,
+                ])->values()->all(),
+                'chips'           => $chips,
+            ],
+            'message'         => $msg,
+        ];
+    }
+
     private function crearPedidoCliente(array $args, ?array $liveDraft = null, ?string $userMessage = null, ?string $sessionId = null): array
     {
         $clienteId = $args['cliente_id'] ?? $args['cliente'] ?? null;
@@ -1210,6 +1394,23 @@ class GeminiToolsService
             $producto = $resProd['producto'];
             $prodId = $producto->ProductoId;
 
+            $presentacionConfirmada = ($item['presentacion_confirmada'] ?? false) === true;
+            if (!$presentacionConfirmada) {
+                $ambiguedadPres = $this->verificarAmbiguedadPresentacion(
+                    $producto,
+                    $unidadId,
+                    $factor,
+                    $prodId,
+                    'venta',
+                    $cantidad,
+                    $nombreClienteBuscado ?: null,
+                    'pedido'
+                );
+                if ($ambiguedadPres !== null) {
+                    return $ambiguedadPres;
+                }
+            }
+
             // Resolver presentación en DetalleProductoMedida
             $resMedida = $this->resolverDetalleProductoMedida($prodId, $unidadId, $factor, $precio);
 
@@ -1351,6 +1552,24 @@ class GeminiToolsService
                 }
 
                 $producto   = $resProd['producto'];
+
+                $presentacionConfirmada = ($item['presentacion_confirmada'] ?? false) === true;
+                if (!$presentacionConfirmada) {
+                    $ambiguedadPres = $this->verificarAmbiguedadPresentacion(
+                        $producto,
+                        $unidadId,
+                        $factor,
+                        $prodId,
+                        'venta',
+                        $cant,
+                        $clienteNombre ?: $clienteId,
+                        'pedido'
+                    );
+                    if ($ambiguedadPres !== null) {
+                        return $ambiguedadPres;
+                    }
+                }
+
                 $resMedida  = $this->resolverDetalleProductoMedida($producto->ProductoId, $unidadId, $factor, $precio);
                 $factorFinal = $resMedida['factor_conversion'];
                 $precioUnitario = $resMedida['precio_unitario'] > 0 ? $resMedida['precio_unitario'] : (float)($producto->ProductoPrecioVenta ?? 0);
@@ -1484,6 +1703,23 @@ class GeminiToolsService
             }
 
             $producto = $resProd['producto'];
+
+            $presentacionConfirmada = ($item['presentacion_confirmada'] ?? false) === true;
+            if (!$presentacionConfirmada) {
+                $ambiguedadPres = $this->verificarAmbiguedadPresentacion(
+                    $producto,
+                    $unidadId,
+                    $factor,
+                    $prodId,
+                    'venta',
+                    $cant,
+                    $clienteData['nombre'] ?? ($clienteNombre ?: null),
+                    'pedido'
+                );
+                if ($ambiguedadPres !== null) {
+                    return $ambiguedadPres;
+                }
+            }
 
             $resMedida      = $this->resolverDetalleProductoMedida($producto->ProductoId, $unidadId, $factor, $precio);
             $factor         = $resMedida['factor_conversion'];
@@ -2911,6 +3147,23 @@ class GeminiToolsService
             $producto = $resProd['producto'];
             $prodId = $producto->ProductoId;
 
+            $presentacionConfirmada = ($item['presentacion_confirmada'] ?? false) === true;
+            if (!$presentacionConfirmada) {
+                $ambiguedadPres = $this->verificarAmbiguedadPresentacion(
+                    $producto,
+                    $unidadId,
+                    $factor,
+                    $prodId,
+                    'compra',
+                    $cant,
+                    $proveedorId ?: null,
+                    'orden_compra'
+                );
+                if ($ambiguedadPres !== null) {
+                    return $ambiguedadPres;
+                }
+            }
+
             $resMedida = $this->resolverDetalleProductoMedida($prodId, $unidadId, $factor, $precio);
             $precioCompra = $resMedida['precio_compra'] > 0 ? $resMedida['precio_compra'] : ($resMedida['precio_unitario'] > 0 ? $resMedida['precio_unitario'] : 1.0);
             if ($precio !== null && $precio > 0) {
@@ -3100,6 +3353,24 @@ class GeminiToolsService
 
                 $producto = $resProd['producto'];
                 $producto->loadMissing(['categoria', 'detalleProductoMedidas.unidadMedida']);
+
+                $presentacionConfirmada = ($item['presentacion_confirmada'] ?? false) === true;
+                if (!$presentacionConfirmada) {
+                    $ambiguedadPres = $this->verificarAmbiguedadPresentacion(
+                        $producto,
+                        $unidadId,
+                        $factor,
+                        $prodId,
+                        'compra',
+                        $cant,
+                        $terminoProveedor ?: null,
+                        'orden_compra'
+                    );
+                    if ($ambiguedadPres !== null) {
+                        return $ambiguedadPres;
+                    }
+                }
+
                 $resMedida = $this->resolverDetalleProductoMedida($producto->ProductoId, $unidadId, $factor, $precio);
                 $factor = $resMedida['factor_conversion'];
                 $precioCompra = $resMedida['precio_compra'] > 0 ? $resMedida['precio_compra'] : ($resMedida['precio_unitario'] > 0 ? $resMedida['precio_unitario'] : 1.0);
@@ -3375,6 +3646,23 @@ class GeminiToolsService
 
             $producto = $resProd['producto'];
             $producto->loadMissing(['categoria', 'detalleProductoMedidas.unidadMedida']);
+
+            $presentacionConfirmada = ($item['presentacion_confirmada'] ?? false) === true;
+            if (!$presentacionConfirmada) {
+                $ambiguedadPres = $this->verificarAmbiguedadPresentacion(
+                    $producto,
+                    $unidadId,
+                    $factor,
+                    $prodId,
+                    'compra',
+                    $cant,
+                    $proveedorData['ProveedorRazonSocial'] ?? ($terminoProveedor ?: null),
+                    'orden_compra'
+                );
+                if ($ambiguedadPres !== null) {
+                    return $ambiguedadPres;
+                }
+            }
 
             $resMedida = $this->resolverDetalleProductoMedida($producto->ProductoId, $unidadId, $factor, $precio);
             $factor = $resMedida['factor_conversion'];

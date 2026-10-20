@@ -69,8 +69,10 @@ REGLAS DE DOMINIO Y HERRAMIENTAS:
      b) Si el usuario proporciona los datos del cliente o confirma registrarlo, invoca crear_cliente o abrir_formulario_cliente.
      c) Al registrarse el cliente, el sistema cargará automáticamente el pedido pendiente asociado con los productos seleccionados.
    - RECUPERACIÓN DE BORRADOR: Si el usuario descartó un pedido por error y pide restaurarlo ("deshacer", "recupera el borrador", "restaura el pedido"), ejecuta recuperar_borrador_pedido.
-5. DESAMBIGUACIÓN OBLIGATORIA:
-   - Si existen 2 o más productos que coinciden (ej. presentaciones de 1.5L vs 2L), PREGUNTA al usuario cuál desea antes de abrir formulario o crear el pedido.
+5. DESAMBIGUACIÓN OBLIGATORIA DE PRODUCTOS Y PRESENTACIONES:
+   - Si existen 2 o más productos que coinciden por nombre o marca (ej. Pepsi 500 ml vs Pepsi 3000 ml), o si la herramienta devuelve 'ambiguous_product', PREGUNTA al usuario cuál desea usando los chips proporcionados.
+   - Si un producto tiene 2 o más presentaciones (ej. Unidad vs Paquete de 4) y el usuario NO especificó explícitamente si se refiere a la unidad simple o al paquete/caja (o si la herramienta devuelve 'ambiguous_presentation'), PREGUNTA obligatoriamente al usuario a qué presentación se refiere (presentándole los chips de las presentaciones con sus respectivos precios) ANTES de abrir el formulario tanto en órdenes de clientes como en órdenes de compra a proveedores.
+   - NUNCA asumas por tu cuenta si es unidad o paquete cuando el usuario no lo haya dicho explícitamente (ej: si dice "2 pepsi de 3 litros", "10 aceites"). Pasa los parámetros tal como los dijo el usuario.
 6. CONSULTAS FRECUENTES:
    - Conteo o resumen de pedidos → obtener_estadisticas_pedidos.
    - Pedidos de hoy → obtener_pedidos_del_dia.
@@ -372,7 +374,7 @@ PROMPT;
                         $capturedChips = $toolResult['chips'];
                     }
 
-                    if (in_array($toolResult['status'] ?? '', ['ambiguous_product', 'ambiguous_supplier', 'reassign_confirmation_needed'], true)) {
+                    if (in_array($toolResult['status'] ?? '', ['ambiguous_product', 'ambiguous_presentation', 'ambiguous_supplier', 'reassign_confirmation_needed'], true)) {
                         $primaryToolName = $toolName;
                         $primaryToolResult = $toolResult;
                         $capturedUiAction = null;
@@ -401,7 +403,7 @@ PROMPT;
                 $requiresUserStop = false;
                 foreach ($executedInThisTurn as $exec) {
                     $st = $exec['result']['status'] ?? '';
-                    if (in_array($st, ['missing_fields', 'pending_confirmation', 'awaiting_input', 'ambiguous_product', 'ambiguous_supplier', 'supplier_not_found', 'reassign_confirmation_needed', 'generic_supplier_not_configured'], true) || !empty($exec['result']['ui_action'])) {
+                    if (in_array($st, ['missing_fields', 'pending_confirmation', 'awaiting_input', 'ambiguous_product', 'ambiguous_presentation', 'ambiguous_supplier', 'supplier_not_found', 'reassign_confirmation_needed', 'generic_supplier_not_configured'], true) || !empty($exec['result']['ui_action'])) {
                         $requiresUserStop = true;
                         break;
                     }
@@ -468,9 +470,9 @@ PROMPT;
 
             // Extraer respuesta en lenguaje natural sintetizada por Gemini
             $reply = trim($currentResponse['text'] ?? '');
-            if (($finalToolResult['status'] ?? '') === 'ambiguous_product') {
+            if (in_array($finalToolResult['status'] ?? '', ['ambiguous_product', 'ambiguous_presentation'], true)) {
                 if (empty($reply) || (!str_contains($reply, '?') && !str_contains($reply, '¿'))) {
-                    $reply = $finalToolResult['message'] ?? 'Se encontraron varios productos coincidentes. Por favor indica cuál deseas.';
+                    $reply = $finalToolResult['message'] ?? 'Se requiere aclarar el producto o la presentación seleccionada. Por favor indica cuál deseas.';
                 }
             } elseif (empty($reply)) {
                 $reply = $primaryToolResult['message'] ?? $lastToolResult['message'] ?? 'Operación completada.';
@@ -843,7 +845,7 @@ PROMPT;
                         if (!empty($toolResult['ui_action'])) $capturedUiAction = $toolResult['ui_action'];
                         if (!empty($toolResult['chips'])) $capturedChips = $toolResult['chips'];
 
-                        if (($toolResult['status'] ?? '') === 'ambiguous_product') {
+                        if (in_array($toolResult['status'] ?? '', ['ambiguous_product', 'ambiguous_presentation'], true)) {
                             $primaryToolName = $toolName;
                             $primaryToolResult = $toolResult;
                             $capturedUiAction = null;
@@ -861,7 +863,7 @@ PROMPT;
                     $requiresUserStop = false;
                     foreach ($executedInTurn as $exec) {
                         $st = $exec['result']['status'] ?? '';
-                        if (in_array($st, ['missing_fields', 'pending_confirmation', 'awaiting_input', 'ambiguous_product'], true) || !empty($exec['result']['ui_action'])) {
+                        if (in_array($st, ['missing_fields', 'pending_confirmation', 'awaiting_input', 'ambiguous_product', 'ambiguous_presentation'], true) || !empty($exec['result']['ui_action'])) {
                             $requiresUserStop = true;
                             break;
                         }
@@ -905,9 +907,9 @@ PROMPT;
                 $finalToolResult = $primaryToolResult ?? $lastToolResult;
 
                 $reply = trim($currentResponse['text'] ?? '');
-                if (($finalToolResult['status'] ?? '') === 'ambiguous_product') {
+                if (in_array($finalToolResult['status'] ?? '', ['ambiguous_product', 'ambiguous_presentation'], true)) {
                     if (empty($reply) || (!str_contains($reply, '?') && !str_contains($reply, '¿'))) {
-                        $reply = $finalToolResult['message'] ?? 'Se encontraron varios productos. Por favor indica cuál deseas.';
+                        $reply = $finalToolResult['message'] ?? 'Se encontraron varios productos o presentaciones. Por favor indica cuál deseas.';
                     }
                 } elseif (empty($reply)) {
                     $reply = $primaryToolResult['message'] ?? $lastToolResult['message'] ?? 'Operación completada.';

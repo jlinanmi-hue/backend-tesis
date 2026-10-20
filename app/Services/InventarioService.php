@@ -1182,6 +1182,8 @@ class InventarioService
         }
 
         $norm = $this->normalizarTexto($term);
+        // Unificar volumen separado por espacios (ej: "3 litros", "3 lt", "1.5 l" -> "3litros", "1.5l")
+        $norm = preg_replace('/(\d+(?:\.\d+)?)\s*(l|lt|lts|litro|litros|ml|mililitros)\b/i', '${1}${2}', $norm);
         $stopWords = ['de', 'del', 'en', 'para', 'con', 'sin', 'un', 'una', 'el', 'la', 'los', 'las', 'y'];
         $words = array_filter(explode(' ', $norm), fn($w) => strlen($w) >= 2 && !in_array($w, $stopWords, true));
         if (empty($words)) {
