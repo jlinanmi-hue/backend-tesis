@@ -32,10 +32,11 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 
-// 1. Rutas de Autenticación con Activación Diferida
+// 1. Rutas de Autenticación con Activación Diferida y Sesión Única
 Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::post('/logout', [AuthController::class, 'logout']);
+    Route::match(['get', 'post'], '/verify-session', [AuthController::class, 'verifySession']);
 });
 
 // Rutas del Dashboard / Métricas Oficiales de Tesis (PODE, PEOR, PRS, TBPP)

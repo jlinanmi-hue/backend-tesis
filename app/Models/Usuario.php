@@ -33,6 +33,9 @@ class Usuario extends Authenticatable
         'UsuarioUsuarioEliminacion',
         'UsuarioHostEliminacion',
         'UsuarioFechaEliminacion',
+        'UsuarioSessionToken',
+        'UsuarioUltimoLogin',
+        'UsuarioUltimoDispositivo',
     ];
 
     protected $hidden = [

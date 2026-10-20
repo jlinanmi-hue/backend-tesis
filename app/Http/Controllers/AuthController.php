@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -74,12 +75,27 @@ class AuthController extends Controller
             }
         }
 
-        // 4. Iniciar sesión o generar token
+        // 4. Iniciar sesión única y generar token de sesión
         Auth::login($usuario);
+
+        $ua = $request->header('User-Agent', '');
+        $isMobile = preg_match('/Mobile|Android|iP(hone|od)|IEMobile|BlackBerry/i', $ua);
+        $isTablet = preg_match('/(tablet|ipad|playbook|silk)|(android(?!.*mobi))/i', $ua);
+        $dispositivo = $isMobile ? 'MOVIL' : ($isTablet ? 'TABLET' : 'DESKTOP');
+
+        $sessionToken = (string) Str::uuid();
+
+        // Control de sesión única: Invalida cualquier sesión previa del usuario
+        $usuario->UsuarioSessionToken = $sessionToken;
+        $usuario->UsuarioUltimoLogin = now();
+        $usuario->UsuarioUltimoDispositivo = $dispositivo;
+        $usuario->save();
 
         return response()->json([
             'success' => true,
             'data' => [
+                'session_token' => $sessionToken,
+                'dispositivo' => $dispositivo,
                 'usuario' => [
                     'UsuarioId' => $usuario->UsuarioId,
                     'UsuarioUserName' => $usuario->UsuarioUserName,
@@ -101,10 +117,65 @@ class AuthController extends Controller
     }
 
     /**
+     * Verificar si la sesión actual del dispositivo sigue siendo la única activa.
+     */
+    public function verifySession(Request $request): JsonResponse
+    {
+        $usuarioId = $request->header('X-User-Id') ?? $request->input('usuario_id');
+        $token = $request->header('X-Session-Token') ?? $request->input('session_token');
+
+        if (empty($usuarioId) || empty($token)) {
+            return response()->json([
+                'success' => false,
+                'active'  => false,
+                'code'    => 'SESSION_INVALID',
+                'message' => 'Faltan credenciales de sesión.',
+            ], 401);
+        }
+
+        $usuario = Usuario::where('UsuarioId', $usuarioId)
+            ->where('UsuarioEliminado', 'N')
+            ->first();
+
+        if (!$usuario) {
+            return response()->json([
+                'success' => false,
+                'active'  => false,
+                'code'    => 'USER_NOT_FOUND',
+                'message' => 'Usuario no encontrado.',
+            ], 401);
+        }
+
+        // Si el token almacenado no coincide, significa que se inició sesión en otro dispositivo
+        if ($usuario->UsuarioSessionToken !== $token) {
+            return response()->json([
+                'success' => false,
+                'active'  => false,
+                'code'    => 'SESSION_SUPERSEDED',
+                'ultimo_dispositivo' => $usuario->UsuarioUltimoDispositivo,
+                'ultimo_login' => $usuario->UsuarioUltimoLogin,
+                'message' => 'Tu sesión ha sido abierta en otro dispositivo (' . ($usuario->UsuarioUltimoDispositivo ?? 'Otro') . '). Solo se permite una sesión activa por cuenta.',
+            ], 401);
+        }
+
+        return response()->json([
+            'success' => true,
+            'active'  => true,
+            'dispositivo' => $usuario->UsuarioUltimoDispositivo,
+            'message' => 'Sesión activa y válida.',
+        ], 200);
+    }
+
+    /**
      * Log the user out of the application.
      */
     public function logout(Request $request): JsonResponse
     {
+        $usuarioId = $request->header('X-User-Id') ?? $request->input('usuario_id');
+        if ($usuarioId) {
+            Usuario::where('UsuarioId', $usuarioId)->update(['UsuarioSessionToken' => null]);
+        }
+
         Auth::logout();
 
         return response()->json([

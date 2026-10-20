@@ -2010,9 +2010,9 @@ class DashboardService
             $pedidosHoyCount = (clone $qHoy)->count();
             $montoFacturadoHoy = (float) ((clone $qHoy)->where('PedidoEstado_pedido', 'C')->sum('PedidoTotal') ?: 0);
             $clientesHoyCount = (int) ((clone $qHoy)->distinct('Pedido_ClienteId')->count('Pedido_ClienteId') ?: 0);
-            $tiempoMedioHoy = (float) ((clone $qHoy)->avg('PedidoTiempoEfectivoSeg') ?: 42.0);
+            $tiempoMedioHoy = round((float) ((clone $qHoy)->avg('PedidoTiempoEfectivoSeg') ?: 42.0), 2);
             $pedidosIaCount = (int) ((clone $qHoy)->where('PedidoOrigenIA', 'S')->count());
-            $pctIaHoy = $pedidosHoyCount > 0 ? round(($pedidosIaCount / $pedidosHoyCount) * 100, 1) : 0.0;
+            $pctIaHoy = $pedidosHoyCount > 0 ? round(($pedidosIaCount / $pedidosHoyCount) * 100, 2) : 0.0;
 
             // Fallback elegante para off-hours o jornada en inicio
             if ($pedidosHoyCount === 0) {
@@ -2026,9 +2026,9 @@ class DashboardService
                     $pedidosHoyCount = max(1, (int) round($totP / max(1, $dias)));
                     $montoFacturadoHoy = round(((float) (clone $qPeriodo)->where('PedidoEstado_pedido', 'C')->sum('PedidoTotal')) / max(1, $dias), 2);
                     $clientesHoyCount = max(1, (int) round(((clone $qPeriodo)->distinct('Pedido_ClienteId')->count('Pedido_ClienteId')) / max(1, $dias)));
-                    $tiempoMedioHoy = round((float) ((clone $qPeriodo)->avg('PedidoTiempoEfectivoSeg') ?: 42.0), 1);
+                    $tiempoMedioHoy = round((float) ((clone $qPeriodo)->avg('PedidoTiempoEfectivoSeg') ?: 42.0), 2);
                     $totIa = (clone $qPeriodo)->where('PedidoOrigenIA', 'S')->count();
-                    $pctIaHoy = round(($totIa / $totP) * 100, 1);
+                    $pctIaHoy = round(($totIa / $totP) * 100, 2);
                 } else {
                     $pedidosHoyCount = 14;
                     $montoFacturadoHoy = 3420.50;
