@@ -130,25 +130,36 @@ class ProveedorRepository implements ProveedorRepositoryInterface
         $query = Proveedor::query()
             ->where('ProveedorEliminado', 'N')
             ->where('ProveedorEstado', 'A');
+        $isPgsql = \Illuminate\Support\Facades\DB::getDriverName() === 'pgsql';
 
         if (count($words) > 1) {
-            $query->where(function ($q) use ($words, $term) {
+            $query->where(function ($q) use ($words, $term, $isPgsql) {
                 $q->where('ProveedorRuc', 'like', "{$term}%")
                   ->orWhere('ProveedorTelefono', 'like', "%{$term}%")
                   ->orWhere('ProveedorId', 'like', "%{$term}%")
-                  ->orWhere(function ($sub) use ($words) {
+                  ->orWhere(function ($sub) use ($words, $isPgsql) {
                       foreach ($words as $w) {
-                          $sub->whereRaw("ProveedorRazonSocial COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"]);
+                          if ($isPgsql) {
+                              $sub->where('ProveedorRazonSocial', 'ILIKE', "%{$w}%");
+                          } else {
+                              $sub->whereRaw("[ProveedorRazonSocial] COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"]);
+                          }
                       }
                   });
             });
         } else {
-            $query->where(function ($q) use ($term, $norm) {
+            $query->where(function ($q) use ($term, $norm, $isPgsql) {
                 $q->where('ProveedorRuc', 'like', "{$term}%")
                   ->orWhere('ProveedorTelefono', 'like', "%{$term}%")
-                  ->orWhereRaw("ProveedorRazonSocial COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
-                  ->orWhereRaw("ProveedorRazonSocial COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"])
                   ->orWhere('ProveedorId', 'like', "%{$term}%");
+
+                if ($isPgsql) {
+                    $q->orWhere('ProveedorRazonSocial', 'ILIKE', "%{$term}%")
+                      ->orWhere('ProveedorRazonSocial', 'ILIKE', "%{$norm}%");
+                } else {
+                    $q->orWhereRaw("[ProveedorRazonSocial] COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
+                      ->orWhereRaw("[ProveedorRazonSocial] COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"]);
+                }
             });
         }
 

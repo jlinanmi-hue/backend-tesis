@@ -1182,7 +1182,11 @@ class InventarioService
         }
 
         $norm = $this->normalizarTexto($term);
-        $words = array_filter(explode(' ', $norm), fn($w) => strlen($w) >= 2);
+        $stopWords = ['de', 'del', 'en', 'para', 'con', 'sin', 'un', 'una', 'el', 'la', 'los', 'las', 'y'];
+        $words = array_filter(explode(' ', $norm), fn($w) => strlen($w) >= 2 && !in_array($w, $stopWords, true));
+        if (empty($words)) {
+            $words = array_filter(explode(' ', $norm), fn($w) => strlen($w) >= 2);
+        }
 
         $query = Producto::with([
             'categoria',
@@ -1202,13 +1206,32 @@ class InventarioService
                 $q->where('ProductoId', 'like', "%{$term}%")
                   ->orWhere(function ($sub) use ($words, $isPgsql) {
                       foreach ($words as $w) {
-                          $sub->where(function ($wSub) use ($w, $isPgsql) {
-                              if ($isPgsql) {
-                                  $wSub->where('ProductoNombre', 'ILIKE', "%{$w}%")
-                                       ->orWhere('ProductoMarca', 'ILIKE', "%{$w}%");
+                          $volumeVariants = [];
+                          if (preg_match('/^(\d+(?:\.\d+)?)\s*(l|lt|lts|litro|litros)$/i', $w, $m)) {
+                              $num = (float)$m[1];
+                              $ml = (int)($num * 1000);
+                              $volumeVariants = [(string)$num, "{$ml}ml", "{$ml} ml", "{$num}l", "{$num} l", "{$num} litro", "{$num} litros", (string)$ml];
+                          }
+
+                          $sub->where(function ($wSub) use ($w, $volumeVariants, $isPgsql) {
+                              if (!empty($volumeVariants)) {
+                                  foreach ($volumeVariants as $v) {
+                                      if ($isPgsql) {
+                                          $wSub->orWhere('ProductoNombre', 'ILIKE', "%{$v}%")
+                                               ->orWhere('ProductoMarca', 'ILIKE', "%{$v}%");
+                                      } else {
+                                          $wSub->orWhereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$v}%"])
+                                               ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$v}%"]);
+                                      }
+                                  }
                               } else {
-                                  $wSub->whereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"])
-                                       ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"]);
+                                  if ($isPgsql) {
+                                      $wSub->where('ProductoNombre', 'ILIKE', "%{$w}%")
+                                           ->orWhere('ProductoMarca', 'ILIKE', "%{$w}%");
+                                  } else {
+                                      $wSub->whereRaw("ProductoNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"])
+                                           ->orWhereRaw("ProductoMarca COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"]);
+                                  }
                               }
                           });
                       }

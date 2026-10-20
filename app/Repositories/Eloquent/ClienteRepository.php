@@ -122,25 +122,36 @@ class ClienteRepository implements ClienteRepositoryInterface
         $words = array_filter(explode(' ', $norm), fn($w) => strlen($w) >= 2);
 
         $query = Cliente::activos();
+        $isPgsql = \Illuminate\Support\Facades\DB::getDriverName() === 'pgsql';
 
         if (count($words) > 1) {
-            $query->where(function ($q) use ($words, $term) {
+            $query->where(function ($q) use ($words, $term, $isPgsql) {
                 $q->where('ClienteRuc', 'like', "{$term}%")
                   ->orWhere('ClienteNumero', 'like', "%{$term}%")
                   ->orWhere('ClienteId', 'like', "%{$term}%")
-                  ->orWhere(function ($sub) use ($words) {
+                  ->orWhere(function ($sub) use ($words, $isPgsql) {
                       foreach ($words as $w) {
-                          $sub->whereRaw("ClienteNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"]);
+                          if ($isPgsql) {
+                              $sub->where('ClienteNombre', 'ILIKE', "%{$w}%");
+                          } else {
+                              $sub->whereRaw("[ClienteNombre] COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$w}%"]);
+                          }
                       }
                   });
             });
         } else {
-            $query->where(function ($q) use ($term, $norm) {
+            $query->where(function ($q) use ($term, $norm, $isPgsql) {
                 $q->where('ClienteRuc', 'like', "{$term}%")
                   ->orWhere('ClienteNumero', 'like', "%{$term}%")
-                  ->orWhereRaw("ClienteNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
-                  ->orWhereRaw("ClienteNombre COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"])
                   ->orWhere('ClienteId', 'like', "%{$term}%");
+
+                if ($isPgsql) {
+                    $q->orWhere('ClienteNombre', 'ILIKE', "%{$term}%")
+                      ->orWhere('ClienteNombre', 'ILIKE', "%{$norm}%");
+                } else {
+                    $q->orWhereRaw("[ClienteNombre] COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$term}%"])
+                      ->orWhereRaw("[ClienteNombre] COLLATE Modern_Spanish_CI_AI LIKE ?", ["%{$norm}%"]);
+                }
             });
         }
 
