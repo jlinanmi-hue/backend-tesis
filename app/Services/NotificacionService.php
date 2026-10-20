@@ -291,6 +291,39 @@ class NotificacionService
     }
 
     /**
+     * Helper específico para notificar ingreso de stock desde Compra Rápida / Flash (PYME Vecina)
+     */
+    public function notificarCompraRapida(
+        Producto $producto,
+        float $cantidadRecibida,
+        string $ordenId,
+        string $unidadSimbolo = 'UND',
+        ?string $pedidoId = null
+    ): Notificacion {
+        $cantStr = number_format($cantidadRecibida, 2);
+        $contexto = $pedidoId
+            ? "para mitigar quiebre del Pedido {$pedidoId}"
+            : "en comercio aliado PYME Vecina";
+
+        return $this->crear([
+            'titulo' => "Ingreso de Mercadería: {$producto->ProductoNombre}",
+            'mensaje' => "Se ingresaron {$cantStr} {$unidadSimbolo} al stock desde la OC {$ordenId} ({$contexto}).",
+            'tipo' => 'compra_rapida',
+            'categoria' => 'COMPRA_RAPIDA',
+            'referencia_id' => $ordenId,
+            'badge_texto' => 'Compra Rápida',
+            'badge_tipo' => 'info',
+            'badge_color' => '#0284C7',
+            'badge_icono' => 'zap',
+            'flujo_origen' => "OC: {$ordenId}",
+            'flujo_destino' => 'Almacén Central',
+            'flujo_indicador' => "+{$cantStr} {$unidadSimbolo}",
+            'accion_texto' => 'Ver Movimientos en Kárdex',
+            'accion_url' => "/inventario/movimientos?producto={$producto->ProductoId}",
+        ]);
+    }
+
+    /**
      * Helper específico para notificar anulación de recepción de Orden de Compra
      */
     public function notificarAnulacionRecepcion(

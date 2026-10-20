@@ -807,6 +807,21 @@ class OrdenCompraService
                         'Detalle_Orden_CompraUsuarioRecepcionItemId' => AuditHelper::getCurrentUser(),
                     ]);
 
+                    // Notificación en tiempo real de Compra Rápida
+                    try {
+                        $um = UnidadesMedida::find($unidadId);
+                        $simbolo = $um?->unidades_medidaAbreviatura ?? $um?->unidades_medidaDescripcionUnidades ?? 'UND';
+                        $this->notificacionService->notificarCompraRapida(
+                            $producto,
+                            $cant,
+                            $orden->Orden_CompraId,
+                            $simbolo,
+                            $pedidoId
+                        );
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::error("Error al notificar compra rápida {$orden->Orden_CompraId}: " . $e->getMessage());
+                    }
+
                     if ($pedidoId) {
                         try {
                             $this->roturaStockService->registrarIntento([
