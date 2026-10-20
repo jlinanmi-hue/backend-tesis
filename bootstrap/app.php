@@ -17,6 +17,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'deferred.access' => \App\Http\Middleware\CheckDeferredAccess::class,
             'verify.whatsapp' => \App\Http\Middleware\VerifyWhatsAppToken::class,
         ]);
+        $middleware->api(append: [
+            \App\Http\Middleware\CheckSingleSession::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(

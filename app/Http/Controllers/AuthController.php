@@ -95,6 +95,7 @@ class AuthController extends Controller
             'success' => true,
             'data' => [
                 'session_token' => $sessionToken,
+                'token' => $sessionToken,
                 'dispositivo' => $dispositivo,
                 'usuario' => [
                     'UsuarioId' => $usuario->UsuarioId,
