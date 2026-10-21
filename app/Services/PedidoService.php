@@ -1109,40 +1109,44 @@ class PedidoService
             }
 
             // 1. Revertir el stock de cada producto y asentar contra-movimiento de entrada en Kárdex
+            // (Solo si es un Pedido formal; si era una Cotización, el stock nunca se descontó)
             $pedido->loadMissing('detalles.producto');
+            $esCotizacion = in_array(mb_strtoupper(trim((string)$pedido->PedidoAcuerdo_Comercial)), ['COTIZACION', 'COTIZACIÓN', 'COT']) || (stripos((string)$pedido->PedidoAcuerdo_Comercial, 'cotiza') !== false);
 
-            foreach ($pedido->detalles as $detalle) {
-                $producto = $detalle->producto;
-                $cantidad = (float) $detalle->Detalle_Pedido_Productos_cantidad;
-                $cantFisica = (float) ($detalle->Detalle_Pedido_Productos_cantidad_fisica ?? $cantidad);
+            if (!$esCotizacion) {
+                foreach ($pedido->detalles as $detalle) {
+                    $producto = $detalle->producto;
+                    $cantidad = (float) $detalle->Detalle_Pedido_Productos_cantidad;
+                    $cantFisica = (float) ($detalle->Detalle_Pedido_Productos_cantidad_fisica ?? $cantidad);
 
-                if ($producto && $cantidad > 0) {
-                    // 1. Revertir la porción física consumida
-                    if ($cantFisica > 0) {
-                        $producto->increment('ProductoStockActual', $cantFisica);
+                    if ($producto && $cantidad > 0) {
+                        // 1. Revertir la porción física consumida
+                        if ($cantFisica > 0) {
+                            $producto->increment('ProductoStockActual', $cantFisica);
+                        }
+
+                        $nuevoStock = (float) $producto->fresh()->ProductoStockActual;
+                        $unidadId = $detalle->Detalle_Pedido_Productos_unidades_medidaId ?? 'UND-00001';
+
+                        // 2. Registrar contra-movimiento de entrada compensatoria en Kárdex
+                        $movimientoId = $this->inventarioService->getNextMovimientoId();
+                        $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
+
+                        MovimientoProducto::create(array_merge([
+                            'Movimiento_productoId' => $movimientoId,
+                            'Movimiento_productoCantidadPresentacion' => (string) $cantidad,
+                            'Movimiento_productoDocumentoOperacionId' => 'DEV-' . $pedido->PedidoId,
+                            'Movimiento_productoTipoMovimiento' => 'E', // E = Entrada compensatoria
+                            'Movimiento_productoCostoPrecioUnitario' => (string) $detalle->Detalle_Pedido_Productos_precio_unitario_venta,
+                            'Movimiento_productoCantidadEntrada' => (string) $cantFisica,
+                            'Movimiento_productoCantidadSalida' => '0',
+                            'Movimiento_productoCantidadSaldo' => (string) $nuevoStock,
+                            'Movimiento_productoFecha_Movimiento' => now(),
+                            'Movimiento_producto_ProductoId' => $producto->ProductoId,
+                            'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $unidadId,
+                            'Movimiento_productoEliminado' => 'N',
+                        ], $auditMov));
                     }
-
-                    $nuevoStock = (float) $producto->fresh()->ProductoStockActual;
-                    $unidadId = $detalle->Detalle_Pedido_Productos_unidades_medidaId ?? 'UND-00001';
-
-                    // 2. Registrar contra-movimiento de entrada compensatoria en Kárdex
-                    $movimientoId = $this->inventarioService->getNextMovimientoId();
-                    $auditMov = AuditHelper::getCreationAudit('Movimiento_producto');
-
-                    MovimientoProducto::create(array_merge([
-                        'Movimiento_productoId' => $movimientoId,
-                        'Movimiento_productoCantidadPresentacion' => (string) $cantidad,
-                        'Movimiento_productoDocumentoOperacionId' => 'DEV-' . $pedido->PedidoId,
-                        'Movimiento_productoTipoMovimiento' => 'E', // E = Entrada compensatoria
-                        'Movimiento_productoCostoPrecioUnitario' => (string) $detalle->Detalle_Pedido_Productos_precio_unitario_venta,
-                        'Movimiento_productoCantidadEntrada' => (string) $cantFisica,
-                        'Movimiento_productoCantidadSalida' => '0',
-                        'Movimiento_productoCantidadSaldo' => (string) $nuevoStock,
-                        'Movimiento_productoFecha_Movimiento' => now(),
-                        'Movimiento_producto_ProductoId' => $producto->ProductoId,
-                        'Movimiento_producto_Detalle_Producto_medida_unidades_medidaId' => $unidadId,
-                        'Movimiento_productoEliminado' => 'N',
-                    ], $auditMov));
                 }
             }
 

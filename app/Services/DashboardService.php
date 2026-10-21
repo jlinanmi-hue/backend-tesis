@@ -2285,11 +2285,21 @@ class DashboardService
                 ];
             }
 
-            // 8. Pedidos Por Atender (Lista Operativa de Órdenes Pendientes <12h)
+            // 8. Pedidos Por Atender (Solo órdenes pendientes que superaron el SLA de 12h o estén expiradas)
+            $timeoutHours = (float) config('orders.timeout_hours', env('ORDER_TIMEOUT_HOURS', 12));
+            $limiteExpirado = now()->subHours($timeoutHours);
+
             $pendientesDb = DB::table('Pedido as p')
                 ->leftJoin('Cliente as c', 'p.Pedido_ClienteId', '=', 'c.ClienteId')
                 ->where('p.PedidoEliminado', 'N')
                 ->where('p.PedidoEstado_pedido', 'P')
+                ->where(function ($q) use ($limiteExpirado) {
+                    $q->where('p.PedidoFechaCreacion', '<=', $limiteExpirado)
+                      ->orWhere(function ($q2) {
+                          $q2->whereNotNull('p.PedidoFechaEntrega')
+                             ->where('p.PedidoFechaEntrega', '<', now()->startOfDay());
+                      });
+                })
                 ->select(
                     'p.PedidoId as pedido_id',
                     'c.ClienteNombre as cliente',
@@ -2305,10 +2315,10 @@ class DashboardService
 
             $pedidosPorAtender = [];
             foreach ($pendientesDb as $p) {
-                $created = $p->fecha_creacion ? Carbon::parse($p->fecha_creacion) : now()->subHours(2);
+                $created = $p->fecha_creacion ? Carbon::parse($p->fecha_creacion) : now()->subHours(12);
                 $diffMin = abs($created->diffInMinutes(now()));
                 $horasEspera = max(0.2, round($diffMin / 60, 1));
-                $horasRestantes = max(0.0, round(12.0 - $horasEspera, 1));
+                $horasRestantes = max(0.0, round($timeoutHours - $horasEspera, 1));
 
                 $pedidosPorAtender[] = [
                     'pedido_id'       => $p->pedido_id,
@@ -2319,21 +2329,7 @@ class DashboardService
                     'distrito'        => $p->direccion ? explode(',', $p->direccion)[0] : 'Trujillo Centro',
                     'horas_espera'    => $horasEspera,
                     'horas_restantes' => $horasRestantes,
-                    'urgente'         => ($horasRestantes <= 3.0 || $horasEspera >= 9.0),
-                ];
-            }
-
-            if (empty($pedidosPorAtender)) {
-                $pedidosPorAtender[] = [
-                    'pedido_id'       => 'PED-00046',
-                    'cliente'         => 'MIGUEL BLAS JANETT',
-                    'telefono'        => '948123456',
-                    'total'           => 212.68,
-                    'es_delivery'     => true,
-                    'distrito'        => 'Trujillo Centro',
-                    'horas_espera'    => 1.4,
-                    'horas_restantes' => 10.6,
-                    'urgente'         => false,
+                    'urgente'         => true,
                 ];
             }
 
