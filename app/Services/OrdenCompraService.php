@@ -70,6 +70,7 @@ class OrdenCompraService
             ['codigo' => 'EN_RECEPCION', 'nombre' => 'En Recepción', 'descripcion' => 'Logístico realizando conteo físico y recepción ítem por ítem en muelle'],
             ['codigo' => 'CERRADA', 'nombre' => 'Cerrada', 'descripcion' => 'Recepción finalizada con el 100% de productos pedidos entregados'],
             ['codigo' => 'CERRADA_CON_FALTANTE', 'nombre' => 'Cerrada con Faltante', 'descripcion' => 'Recepción finalizada con ítems no entregados o faltantes'],
+            ['codigo' => 'RECHAZADA', 'nombre' => 'Rechazada', 'descripcion' => 'Recepción rechazada en su totalidad por no cumplir requisitos o entrega no conforme'],
             ['codigo' => 'ANULADA', 'nombre' => 'Anulada', 'descripcion' => 'Orden de compra cancelada o recepción revertida en Kárdex'],
             ['codigo' => 'CANCELADA_PROVEEDOR', 'nombre' => 'Cancelada por Proveedor', 'descripcion' => 'Proveedor no pudo atender o rechazó la orden de compra'],
         ];
@@ -617,18 +618,37 @@ class OrdenCompraService
                 ]);
             }
 
-            // Evaluar si existen faltantes
+            // Evaluar si existen faltantes y si hubo rechazo de ítems
+            $totalItems = $detalles->count();
+            $itemsRechazados = 0;
+            $totalRecibido = 0.0;
             $hayFaltante = false;
+
             foreach ($detalles as $det) {
                 $recibido = (float) ($det->Detalle_Orden_CompraCantidadRecibida ?? 0);
                 $pedido = (float) $det->Detalle_Orden_CompraCantidad;
+                $esRechazado = ($det->Detalle_Orden_CompraEntregado === 'R');
+
+                $totalRecibido += $recibido;
+                if ($esRechazado) {
+                    $itemsRechazados++;
+                }
                 if ($recibido < $pedido) {
                     $hayFaltante = true;
-                    break;
                 }
             }
 
-            $nuevoEstado = $hayFaltante ? 'CERRADA_CON_FALTANTE' : 'CERRADA_CONFORME';
+            // Si todos los ítems fueron rechazados o no se recibió nada y hubo rechazo expreso:
+            // la orden es RECHAZADA (no cerrada con faltante).
+            if ($itemsRechazados === $totalItems || ($totalRecibido <= 0.0001 && $itemsRechazados > 0)) {
+                $nuevoEstado = 'RECHAZADA';
+                $hayFaltante = false;
+            } elseif ($hayFaltante) {
+                $nuevoEstado = 'CERRADA_CON_FALTANTE';
+            } else {
+                $nuevoEstado = 'CERRADA_CONFORME';
+            }
+
             $ahora = now();
 
             $this->ordenCompraRepository->update($id, [
@@ -638,11 +658,13 @@ class OrdenCompraService
                 'Orden_CompraUsuarioRecepcionId' => $orden->Orden_CompraUsuarioRecepcionId ?? AuditHelper::getCurrentUser(),
             ]);
 
-            // Vincular productos al proveedor en el catálogo comercial
-            $this->vincularProductosProveedor($orden);
+            // Vincular productos al proveedor en el catálogo comercial solo si hubo recepción física
+            if ($totalRecibido > 0) {
+                $this->vincularProductosProveedor($orden);
+            }
 
-            // Generar nueva OC de reposición si se solicitó expresamente
-            if ($generarNuevaOcFaltantes && $hayFaltante) {
+            // Generar nueva OC de reposición si se solicitó expresamente (solo si hubo faltante parcial, no en rechazo total)
+            if ($generarNuevaOcFaltantes && $hayFaltante && $nuevoEstado !== 'RECHAZADA') {
                 $this->generarNuevaOcFaltantes($id);
             }
 
@@ -917,6 +939,7 @@ class OrdenCompraService
             'RECEPCION_PARCIAL', 'EN_RECEPCION' => 'RECEPCION_PARCIAL',
             'CERRADA_CONFORME', 'CERRADA', 'C' => ($orden->Orden_CompraCerradaConFaltante === 'S' ? 'CERRADA_CON_FALTANTE' : 'CERRADA_CONFORME'),
             'CERRADA_CON_FALTANTE' => 'CERRADA_CON_FALTANTE',
+            'RECHAZADA' => 'RECHAZADA',
             'ANULADA', 'A', 'CANCELADA_PROVEEDOR' => 'ANULADA',
             default => $orden->Orden_CompraEstado ?? 'EMITIDA'
         };
@@ -935,7 +958,7 @@ class OrdenCompraService
         $fechaEmisionStr = $orden->Orden_CompraFecha?->format('d/m/Y H:i') ?? '-';
         $fechaEstimadaStr = $orden->Orden_CompraFechaEstimadaLlegada?->format('d/m/Y') ?? 'No definida';
         $fechaRecepcionRealStr = $orden->Orden_CompraFechaRecepcionReal?->format('d/m/Y H:i') 
-            ?? (in_array($estadoCanonico, ['CERRADA_CONFORME', 'CERRADA_CON_FALTANTE']) ? $orden->Orden_CompraFechaModificacion?->format('d/m/Y H:i') : 'En proceso');
+            ?? (in_array($estadoCanonico, ['CERRADA_CONFORME', 'CERRADA_CON_FALTANTE', 'RECHAZADA']) ? $orden->Orden_CompraFechaModificacion?->format('d/m/Y H:i') : 'En proceso');
 
         $ordenData = [
             'id' => $orden->Orden_CompraId,
@@ -945,6 +968,7 @@ class OrdenCompraService
                 'RECEPCION_PARCIAL' => 'En Recepción Parcial',
                 'CERRADA_CONFORME' => 'Cerrada Conforme',
                 'CERRADA_CON_FALTANTE' => 'Cerrada con Faltante',
+                'RECHAZADA' => 'Rechazada',
                 'ANULADA' => 'Anulada',
                 default => $estadoCanonico
             },
@@ -980,6 +1004,12 @@ class OrdenCompraService
             $abreviatura = $det->unidadMedida?->unidades_medidaAbreviatura ?? 'UND';
             $presentacionCompleta = ($factor > 1) ? "{$abreviatura} ({$factor} UND)" : $abreviatura;
 
+            $esRechazado = ($det->Detalle_Orden_CompraEntregado === 'R');
+            $estadoRecepcion = $esRechazado 
+                ? 'RECHAZADO' 
+                : (($recibido >= $solicitado) ? 'COMPLETO' : ($recibido > 0 ? 'PARCIAL' : 'PENDIENTE'));
+            $cantPendiente = $esRechazado ? 0.0 : max(0.0, round($solicitado - $recibido, 2));
+
             return [
                 'id' => $det->Detalle_Orden_CompraId,
                 'producto_id' => $det->Detalle_ProductoId,
@@ -992,12 +1022,13 @@ class OrdenCompraService
                 'presentacion_completa' => $presentacionCompleta,
                 'cantidad_solicitada' => $solicitado,
                 'cantidad_recibida' => $recibido,
-                'cantidad_pendiente' => max(0.0, round($solicitado - $recibido, 2)),
+                'cantidad_pendiente' => $cantPendiente,
                 'total_unidades_base_solicitadas' => round($solicitado * $factor, 2),
                 'total_unidades_base_recibidas' => round($recibido * $factor, 2),
-                'total_unidades_base_pendientes' => round(max(0.0, round($solicitado - $recibido, 2)) * $factor, 2),
+                'total_unidades_base_pendientes' => round($cantPendiente * $factor, 2),
                 'entregado' => $det->Detalle_Orden_CompraEntregado === 'S',
-                'estado_recepcion' => ($recibido >= $solicitado) ? 'COMPLETO' : ($recibido > 0 ? 'PARCIAL' : 'PENDIENTE'),
+                'rechazado' => $esRechazado,
+                'estado_recepcion' => $estadoRecepcion,
                 'fecha_recepcion' => $det->Detalle_Orden_CompraFechaRecepcionItem?->format('d/m/Y H:i'),
                 'usuario_recepcion' => AuditHelper::resolverNombreUsuario($det->Detalle_Orden_CompraUsuarioRecepcionItemId),
             ];

@@ -23,7 +23,7 @@ class OrdenCompra extends Model
         'Orden_CompraSubtotal',
         'Orden_CompraIgv',
         'Orden_CompraTotal',
-        'Orden_CompraEstado', // BORRADOR, ENVIADA, PENDIENTE_RECEPCION, EN_RECEPCION, CERRADA, CERRADA_CON_FALTANTE, ANULADA, CANCELADA_PROVEEDOR
+        'Orden_CompraEstado', // BORRADOR, ENVIADA, PENDIENTE_RECEPCION, EN_RECEPCION, CERRADA, CERRADA_CON_FALTANTE, RECHAZADA, ANULADA, CANCELADA_PROVEEDOR
         'Orden_CompraObservacion',
         'Orden_Compra_ProveedorId',
         'Orden_CompraFechaEstimadaLlegada',
@@ -96,6 +96,8 @@ class OrdenCompra extends Model
                     $query->whereIn('Orden_CompraEstado', ['CERRADA_CONFORME', 'CERRADA', 'C']),
                 'CERRADA_CON_FALTANTE' => 
                     $query->where('Orden_CompraEstado', 'CERRADA_CON_FALTANTE'),
+                'RECHAZADA' => 
+                    $query->where('Orden_CompraEstado', 'RECHAZADA'),
                 'ANULADA', 'A', 'CANCELADA_PROVEEDOR' => 
                     $query->whereIn('Orden_CompraEstado', ['ANULADA', 'A', 'CANCELADA_PROVEEDOR']),
                 default => $query->where('Orden_CompraEstado', $estadoUpper),

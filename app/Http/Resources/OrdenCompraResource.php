@@ -17,6 +17,7 @@ class OrdenCompraResource extends JsonResource
             'RECEPCION_PARCIAL', 'EN_RECEPCION' => 'RECEPCION_PARCIAL',
             'CERRADA_CONFORME', 'CERRADA', 'C' => ($this->Orden_CompraCerradaConFaltante === 'S' ? 'CERRADA_CON_FALTANTE' : 'CERRADA_CONFORME'),
             'CERRADA_CON_FALTANTE' => 'CERRADA_CON_FALTANTE',
+            'RECHAZADA' => 'RECHAZADA',
             'ANULADA', 'A', 'CANCELADA_PROVEEDOR' => 'ANULADA',
             default => $this->Orden_CompraEstado ?? 'EMITIDA'
         };
@@ -26,6 +27,7 @@ class OrdenCompraResource extends JsonResource
             'RECEPCION_PARCIAL' => 'En Recepción Parcial',
             'CERRADA_CONFORME' => 'Cerrada Conforme',
             'CERRADA_CON_FALTANTE' => 'Cerrada con Faltante',
+            'RECHAZADA' => 'Rechazada',
             'ANULADA' => 'Anulada',
             default => $estadoCanonico
         };
