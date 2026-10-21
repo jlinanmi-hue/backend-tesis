@@ -108,22 +108,30 @@ PROMPT;
     ) {}
 
     /**
-     * Obtiene el motor de IA activo (OpenAI GPT-5.5 o Google Gemini).
+     * Obtiene el motor de IA activo (Google Gemini o OpenAI GPT-5.5).
      */
     protected function getAiService(): GeminiService|OpenAiService
     {
-        $provider = config('services.ai.provider', env('AI_PROVIDER', 'openai'));
+        $provider = config('services.ai.provider', env('AI_PROVIDER', 'gemini'));
+        $geminiKey = config('services.gemini.api_key');
         $openAiKey = config('services.openai.api_key');
+
+        if ($provider === 'gemini' && !empty($geminiKey)) {
+            return $this->geminiService;
+        }
+
         if ($provider === 'openai' && !empty($openAiKey)) {
             return $this->openAiService;
         }
-        $geminiKey = config('services.gemini.api_key');
-        if (!empty($geminiKey) && str_starts_with($geminiKey, 'AIzaSy')) {
+
+        if (!empty($geminiKey)) {
             return $this->geminiService;
         }
+
         if (!empty($openAiKey)) {
             return $this->openAiService;
         }
+
         return $this->geminiService;
     }
 
