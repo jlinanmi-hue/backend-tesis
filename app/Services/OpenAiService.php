@@ -624,6 +624,78 @@ class OpenAiService
     }
 
     /**
+     * Procesa una imagen usando GPT-4o-mini Vision.
+     * Devuelve el array decodificado, métricas de tokens y tiempo.
+     */
+    public function analyzeImage(
+        string $base64Image,
+        string $mimeType,
+        string $prompt,
+        ?array $jsonSchema = null,
+        ?string $systemInstruction = null
+    ): array {
+        if (str_contains($base64Image, ';base64,')) {
+            $base64Image = explode(';base64,', $base64Image)[1];
+        }
+
+        $cleanMime = !empty($mimeType) ? $mimeType : 'image/jpeg';
+        $dataUrl = "data:{$cleanMime};base64," . trim($base64Image);
+        $visionModel = 'gpt-4o-mini';
+
+        $messages = [
+            [
+                'role'    => 'system',
+                'content' => $systemInstruction ?? 'Eres un transcriptor logístico de alta precisión para Comercial Valencia. Devuelve exclusivamente JSON válido.',
+            ],
+            [
+                'role'    => 'user',
+                'content' => [
+                    [
+                        'type' => 'text',
+                        'text' => $prompt,
+                    ],
+                    [
+                        'type'      => 'image_url',
+                        'image_url' => [
+                            'url' => $dataUrl,
+                        ],
+                    ],
+                ],
+            ],
+        ];
+
+        $payload = [
+            'model'           => $visionModel,
+            'messages'        => $messages,
+            'response_format' => ['type' => 'json_object'],
+            'temperature'     => 0.1,
+        ];
+
+        $response = Http::withToken($this->apiKey)
+            ->timeout(35)
+            ->post("{$this->baseUrl}/chat/completions", $payload);
+
+        if (!$response->successful()) {
+            $errorData = $response->json();
+            $msg = $errorData['error']['message'] ?? $response->body();
+            throw new Exception("Error en OpenAI Vision ({$response->status()}): {$msg}");
+        }
+
+        $body = $response->json();
+        $rawText = trim($body['choices'][0]['message']['content'] ?? '{}');
+        $usage = $body['usage'] ?? [];
+        $decoded = json_decode($rawText, true);
+
+        return [
+            'success'   => is_array($decoded),
+            'data'      => $decoded ?? [],
+            'raw_text'  => $rawText,
+            'tokens'    => $usage['total_tokens'] ?? 258,
+            'model'     => $visionModel,
+        ];
+    }
+
+    /**
      * Verifica la salud y conectividad con la API de OpenAI.
      */
     public function checkConnection(): array

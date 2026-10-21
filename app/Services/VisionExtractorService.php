@@ -12,6 +12,7 @@ class VisionExtractorService
 {
     public function __construct(
         protected GeminiService $geminiService,
+        protected OpenAiService $openAiService,
         protected CatalogMatcherService $matcherService
     ) {}
 
@@ -62,17 +63,43 @@ PROMPT;
             'required' => ['productos'],
         ];
 
-        $geminiRes = $this->geminiService->analyzeImage(
-            base64Image: $base64,
-            mimeType: $mime,
-            prompt: $prompt,
-            jsonSchema: $jsonSchema,
-            systemInstruction: 'Eres un transcriptor logístico de alta precisión. Devuelve exclusivamente JSON.'
-        );
+        $aiRes = null;
+        $geminiError = null;
+
+        // 1. Intentar con Gemini Vision
+        try {
+            $aiRes = $this->geminiService->analyzeImage(
+                base64Image: $base64,
+                mimeType: $mime,
+                prompt: $prompt,
+                jsonSchema: $jsonSchema,
+                systemInstruction: 'Eres un transcriptor logístico de alta precisión. Devuelve exclusivamente JSON.'
+            );
+        } catch (Exception $e) {
+            $geminiError = $e->getMessage();
+            Log::warning("VisionExtractorService: Gemini falló ('{$geminiError}'). Intentando fallback a OpenAI Vision...");
+        }
+
+        // 2. Si Gemini falló o no devolvió datos válidos, recurrir a OpenAI Vision (gpt-4o-mini)
+        if (empty($aiRes) || empty($aiRes['success'])) {
+            try {
+                $aiRes = $this->openAiService->analyzeImage(
+                    base64Image: $base64,
+                    mimeType: $mime,
+                    prompt: $prompt,
+                    jsonSchema: $jsonSchema,
+                    systemInstruction: 'Eres un transcriptor logístico de alta precisión para Comercial Valencia. Devuelve exclusivamente JSON válido.'
+                );
+                Log::info("VisionExtractorService: Procesado exitosamente con fallback de OpenAI Vision.");
+            } catch (Exception $eOpenAi) {
+                Log::error("VisionExtractorService: Ambos servicios de Visión fallaron.");
+                throw new Exception("Error al procesar visión con IA. Gemini: {$geminiError} | OpenAI: " . $eOpenAi->getMessage());
+            }
+        }
 
         $tiempoMs = (int) round((microtime(true) - $inicio) * 1000);
 
-        $datos = $geminiRes['data'] ?? [];
+        $datos = $aiRes['data'] ?? [];
         $rawProductos = $datos['productos'] ?? [];
 
         // Emparejar cada ítem con el catálogo de productos de la base de datos
@@ -84,7 +111,7 @@ PROMPT;
         // Guardar snapshot de IA en caché durante 1 hora
         Cache::put("vision_snapshot:{$tokenAuditoria}", [
             'usuario_id'         => $usuarioId ?? 'USR-ANON',
-            'tokens_consumidos'  => $geminiRes['tokens'] ?? 258,
+            'tokens_consumidos'  => $aiRes['tokens'] ?? 258,
             'tiempo_ms'          => $tiempoMs,
             'items_detectados'   => $itemsMatched,
             'timestamp'          => now()->toIso8601String(),
@@ -95,9 +122,9 @@ PROMPT;
             'token_auditoria'   => $tokenAuditoria,
             'items'             => $itemsMatched,
             'total_detectados'  => count($itemsMatched),
-            'tokens_consumidos' => $geminiRes['tokens'] ?? 258,
+            'tokens_consumidos' => $aiRes['tokens'] ?? 258,
             'tiempo_ms'         => $tiempoMs,
-            'model'             => $geminiRes['model'] ?? 'gemini-1.5-flash',
+            'model'             => $aiRes['model'] ?? 'vision-ai',
         ];
     }
 
