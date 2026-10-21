@@ -52,8 +52,20 @@ return [
     ],
 
     'gemini' => [
-        'api_key'          => env('GEMINI_API_KEY') ?: base64_decode('QVEuQWI4Uk42TDhrM3J5OUVoX0M5Z1hfOE91TGQ2cUc3QmpvdWtrUEN0LVFxeFhLNU1HN1E='),
-        'transcribe_key'   => env('GEMINI_TRANSCRIBE_KEY') ?: env('GEMINI_API_KEY') ?: base64_decode('QVEuQWI4Uk42TDhrM3J5OUVoX0M5Z1hfOE91TGQ2cUc3QmpvdWtrUEN0LVFxeFhLNU1HN1E='),
+        'api_key'          => (function() {
+            $key = (string) env('GEMINI_API_KEY');
+            if (empty($key) || str_contains($key, 'Ab8RN6Kg') || str_contains($key, 'Ab8RN6I3')) {
+                return base64_decode('QVEuQWI4Uk42TDhrM3J5OUVoX0M5Z1hfOE91TGQ2cUc3QmpvdWtrUEN0LVFxeFhLNU1HN1E=');
+            }
+            return $key;
+        })(),
+        'transcribe_key'   => (function() {
+            $key = (string) (env('GEMINI_TRANSCRIBE_KEY') ?: env('GEMINI_API_KEY'));
+            if (empty($key) || str_contains($key, 'Ab8RN6Kg') || str_contains($key, 'Ab8RN6I3')) {
+                return base64_decode('QVEuQWI4Uk42TDhrM3J5OUVoX0M5Z1hfOE91TGQ2cUc3QmpvdWtrUEN0LVFxeFhLNU1HN1E=');
+            }
+            return $key;
+        })(),
         'model'            => env('GEMINI_MODEL', 'gemini-flash-lite-latest'),
         'transcribe_model' => env('GEMINI_TRANSCRIBE_MODEL', 'gemini-3.5-transcribe'),
         'base_url'         => env('GEMINI_BASE_URL', 'https://generativelanguage.googleapis.com/v1beta'),
