@@ -85,18 +85,21 @@ class DashboardService
 
     public function getPODEDetail(string $mes, array $filters = []): array
     {
-        [$inicio, $fin] = $this->getMonthRange($mes);
-        return [
-            'funnel'          => $this->getOrdersFunnel($inicio, $fin, $filters),
-            'by_day'          => $this->getOrdersByDay($inicio, $fin, $filters),
-            'sla'             => $this->getOrdersSLA($inicio, $fin, $filters),
-            'failure_reasons' => $this->getFailureReasons($inicio, $fin, $filters),
-            'dispatch_status' => $this->getDispatchStatusBreakdown($inicio, $fin, $filters),
-            'peor_kpi'        => $this->getPEOR($mes),
-            'ia_vs_manual'    => $this->getErrorsIaVsManual($inicio, $fin, $filters),
-            'by_type'         => $this->getErrorsByType($inicio, $fin, $filters),
-            'by_severity'     => $this->getErrorsBySeverity($inicio, $fin, $filters),
-        ];
+        $cacheKey = "dashboard:pode_detail:{$mes}:" . md5(json_encode($filters));
+        return Cache::remember($cacheKey, 300, function () use ($mes, $filters) {
+            [$inicio, $fin] = $this->getMonthRange($mes);
+            return [
+                'funnel'          => $this->getOrdersFunnel($inicio, $fin, $filters),
+                'by_day'          => $this->getOrdersByDay($inicio, $fin, $filters),
+                'sla'             => $this->getOrdersSLA($inicio, $fin, $filters),
+                'failure_reasons' => $this->getFailureReasons($inicio, $fin, $filters),
+                'dispatch_status' => $this->getDispatchStatusBreakdown($inicio, $fin, $filters),
+                'peor_kpi'        => $this->getPEOR($mes),
+                'ia_vs_manual'    => $this->getErrorsIaVsManual($inicio, $fin, $filters),
+                'by_type'         => $this->getErrorsByType($inicio, $fin, $filters),
+                'by_severity'     => $this->getErrorsBySeverity($inicio, $fin, $filters),
+            ];
+        });
     }
 
     private function getOrdersFunnel($inicio, $fin, array $filters): array
@@ -109,10 +112,17 @@ class DashboardService
             $query->where('Pedido_canal_pedidoId', $filters['canal']);
         }
 
-        $totalRecepcion   = (clone $query)->count();
-        $totalValidacion  = (clone $query)->where('PedidoEstado_pedido', '!=', 'A')->count();
-        $totalPreparacion = (clone $query)->whereIn('PedidoEstado_pedido', ['C', 'P'])->count();
-        $totalDespacho    = (clone $query)->where('PedidoEstado_pedido', 'C')->count();
+        $stats = $query->selectRaw("
+            COUNT(*) as total_recepcion,
+            SUM(CASE WHEN \"PedidoEstado_pedido\" != 'A' THEN 1 ELSE 0 END) as total_validacion,
+            SUM(CASE WHEN \"PedidoEstado_pedido\" IN ('C', 'P') THEN 1 ELSE 0 END) as total_preparacion,
+            SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN 1 ELSE 0 END) as total_despacho
+        ")->first();
+
+        $totalRecepcion   = (int) ($stats->total_recepcion ?? 0);
+        $totalValidacion  = (int) ($stats->total_validacion ?? 0);
+        $totalPreparacion = (int) ($stats->total_preparacion ?? 0);
+        $totalDespacho    = (int) ($stats->total_despacho ?? 0);
 
         return [
             [
@@ -411,15 +421,18 @@ class DashboardService
 
     public function getPEORDetail(string $mes, array $filters = []): array
     {
-        [$inicio, $fin] = $this->getMonthRange($mes);
-        return [
-            'by_type'         => $this->getErrorsByType($inicio, $fin, $filters),
-            'by_severity'     => $this->getErrorsBySeverity($inicio, $fin, $filters),
-            'ia_vs_manual'    => $this->getErrorsIaVsManual($inicio, $fin, $filters),
-            'by_stage'        => $this->getErrorsByStage($inicio, $fin, $filters),
-            'resolution_time' => $this->getErrorResolutionTime($inicio, $fin, $filters),
-            'feedback_stats'  => $this->getFeedbackStats($inicio, $fin),
-        ];
+        $cacheKey = "dashboard:peor_detail:{$mes}:" . md5(json_encode($filters));
+        return Cache::remember($cacheKey, 300, function () use ($mes, $filters) {
+            [$inicio, $fin] = $this->getMonthRange($mes);
+            return [
+                'by_type'         => $this->getErrorsByType($inicio, $fin, $filters),
+                'by_severity'     => $this->getErrorsBySeverity($inicio, $fin, $filters),
+                'ia_vs_manual'    => $this->getErrorsIaVsManual($inicio, $fin, $filters),
+                'by_stage'        => $this->getErrorsByStage($inicio, $fin, $filters),
+                'resolution_time' => $this->getErrorResolutionTime($inicio, $fin, $filters),
+                'feedback_stats'  => $this->getFeedbackStats($inicio, $fin),
+            ];
+        });
     }
 
     private function getErrorsBySeverity($inicio, $fin, array $filters): array
@@ -777,14 +790,17 @@ class DashboardService
 
     public function getPRSDetail(string $semana, array $filters = []): array
     {
-        [$inicio, $fin] = $this->getWeekRange($semana);
-        return [
-            'top_products'             => $this->getTopStockoutProducts($inicio, $fin, $filters),
-            'by_category'              => $this->getStockoutByCategory($inicio, $fin, $filters),
-            'commercial_impact'        => $this->getStockoutCommercialImpact($inicio, $fin, $filters),
-            'critical_alerts'          => $this->getCriticalStockAlerts(),
-            'cumplimiento_proveedores' => $this->getCumplimientoProveedores($inicio, $fin, $filters),
-        ];
+        $cacheKey = "dashboard:prs_detail:{$semana}:" . md5(json_encode($filters));
+        return Cache::remember($cacheKey, 300, function () use ($semana, $filters) {
+            [$inicio, $fin] = $this->getWeekRange($semana);
+            return [
+                'top_products'             => $this->getTopStockoutProducts($inicio, $fin, $filters),
+                'by_category'              => $this->getStockoutByCategory($inicio, $fin, $filters),
+                'commercial_impact'        => $this->getStockoutCommercialImpact($inicio, $fin, $filters),
+                'critical_alerts'          => $this->getCriticalStockAlerts(),
+                'cumplimiento_proveedores' => $this->getCumplimientoProveedores($inicio, $fin, $filters),
+            ];
+        });
     }
 
     private function getTopStockoutProducts($inicio, $fin, array $filters): array
@@ -1324,15 +1340,18 @@ class DashboardService
 
     public function getTBPPDetail(string $periodo, array $filters = []): array
     {
-        [$inicio, $fin] = $this->getMonthRange($periodo);
-        return [
-            'by_order_size'      => $this->getSearchTimeByOrderSize($inicio, $fin, $filters),
-            'by_warehouse_zone'  => $this->getSearchTimeByZone($inicio, $fin, $filters),
-            'by_operator'        => $this->getSearchTimeByOperator($inicio, $fin, $filters),
-            'ideal_vs_real'      => $this->getIdealVsReal($inicio, $fin, $filters),
-            'subtask_breakdown'  => $this->getSubtaskBreakdown($inicio, $fin, $filters),
-            'by_client_type'     => $this->getSearchTimeByClientType($inicio, $fin, $filters),
-        ];
+        $cacheKey = "dashboard:tbpp_detail:{$periodo}:" . md5(json_encode($filters));
+        return Cache::remember($cacheKey, 300, function () use ($periodo, $filters) {
+            [$inicio, $fin] = $this->getMonthRange($periodo);
+            return [
+                'by_order_size'      => $this->getSearchTimeByOrderSize($inicio, $fin, $filters),
+                'by_warehouse_zone'  => $this->getSearchTimeByZone($inicio, $fin, $filters),
+                'by_operator'        => $this->getSearchTimeByOperator($inicio, $fin, $filters),
+                'ideal_vs_real'      => $this->getIdealVsReal($inicio, $fin, $filters),
+                'subtask_breakdown'  => $this->getSubtaskBreakdown($inicio, $fin, $filters),
+                'by_client_type'     => $this->getSearchTimeByClientType($inicio, $fin, $filters),
+            ];
+        });
     }
 
     private function getSubtaskBreakdown($inicio, $fin, array $filters): array
@@ -1961,7 +1980,7 @@ class DashboardService
 
         $cacheKey = "dashboard:ejecutivo:dias_{$dias}:c_{$canalId}:z_{$zonaId}";
 
-        return Cache::remember($cacheKey, 30, function () use ($dias, $canalId, $zonaId, $filters) {
+        return Cache::remember($cacheKey, 300, function () use ($dias, $canalId, $zonaId, $filters) {
             $fin = now()->endOfDay();
             $inicio = now()->subDays(max(1, $dias) - 1)->startOfDay();
 
@@ -1997,21 +2016,28 @@ class DashboardService
                 $resumenSemanal = "Nivel de entregas por debajo del umbral mínimo requerido.";
             }
 
-            // 3. Resumen de Hoy
+            // 3. Resumen de Hoy (Optimizado a consulta única agregada)
             $hoyInicio = now()->startOfDay();
             $hoyFin = now()->endOfDay();
 
-            $qHoy = DB::table('Pedido')
+            $hoyStats = DB::table('Pedido')
                 ->where('PedidoEliminado', 'N')
-                ->whereBetween('PedidoFechaCreacion', [$hoyInicio, $hoyFin]);
+                ->whereBetween('PedidoFechaCreacion', [$hoyInicio, $hoyFin])
+                ->when($canalId, fn($q) => $q->where('Pedido_canal_pedidoId', $canalId))
+                ->selectRaw("
+                    COUNT(*) as total,
+                    SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN COALESCE(\"PedidoTotal\", 0) ELSE 0 END) as monto_facturado,
+                    COUNT(DISTINCT \"Pedido_ClienteId\") as clientes_count,
+                    AVG(COALESCE(\"PedidoTiempoEfectivoSeg\", 42.0)) as tiempo_medio,
+                    SUM(CASE WHEN \"PedidoOrigenIA\" = 'S' THEN 1 ELSE 0 END) as pedidos_ia
+                ")
+                ->first();
 
-            if ($canalId) $qHoy->where('Pedido_canal_pedidoId', $canalId);
-
-            $pedidosHoyCount = (clone $qHoy)->count();
-            $montoFacturadoHoy = (float) ((clone $qHoy)->where('PedidoEstado_pedido', 'C')->sum('PedidoTotal') ?: 0);
-            $clientesHoyCount = (int) ((clone $qHoy)->distinct('Pedido_ClienteId')->count('Pedido_ClienteId') ?: 0);
-            $tiempoMedioHoy = round((float) ((clone $qHoy)->avg('PedidoTiempoEfectivoSeg') ?: 42.0), 2);
-            $pedidosIaCount = (int) ((clone $qHoy)->where('PedidoOrigenIA', 'S')->count());
+            $pedidosHoyCount = (int) ($hoyStats->total ?? 0);
+            $montoFacturadoHoy = (float) ($hoyStats->monto_facturado ?? 0);
+            $clientesHoyCount = (int) ($hoyStats->clientes_count ?? 0);
+            $tiempoMedioHoy = round((float) ($hoyStats->tiempo_medio ?? 42.0), 2);
+            $pedidosIaCount = (int) ($hoyStats->pedidos_ia ?? 0);
             $pctIaHoy = $pedidosHoyCount > 0 ? round(($pedidosIaCount / $pedidosHoyCount) * 100, 2) : 0.0;
 
             // Fallback elegante para off-hours o jornada en inicio
@@ -2056,20 +2082,26 @@ class DashboardService
                 $semNum = 4 - $i;
                 $semanasLabels[] = "Sem {$semNum}";
 
-                $wQuery = DB::table('Pedido')
+                $wStats = DB::table('Pedido')
                     ->where('PedidoEliminado', 'N')
-                    ->whereBetween('PedidoFechaCreacion', [$wStart, $wEnd]);
-                if ($canalId) $wQuery->where('Pedido_canal_pedidoId', $canalId);
+                    ->whereBetween('PedidoFechaCreacion', [$wStart, $wEnd])
+                    ->when($canalId, fn($q) => $q->where('Pedido_canal_pedidoId', $canalId))
+                    ->selectRaw("
+                        COUNT(*) as to_count,
+                        SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN 1 ELSE 0 END) as ode_count,
+                        AVG(COALESCE(\"PedidoTiempoEfectivoSeg\", 42.0)) as t_val,
+                        SUM(CASE WHEN \"PedidoTieneError\" = 'S' THEN 1 ELSE 0 END) as oer_count
+                    ")
+                    ->first();
 
-                $toW = (clone $wQuery)->count();
-                $odeW = (clone $wQuery)->where('PedidoEstado_pedido', 'C')->count();
+                $toW = (int) ($wStats->to_count ?? 0);
+                $odeW = (int) ($wStats->ode_count ?? 0);
                 $pVal = $toW > 0 ? round(($odeW / $toW) * 100, 1) : round(88.0 + ($semNum * 2.4), 1);
                 $pVal = min(100.0, max(0.0, $pVal));
 
-                $tVal = (clone $wQuery)->avg('PedidoTiempoEfectivoSeg');
-                $tVal = $tVal ? round((float)$tVal, 1) : round(max(38.0, 65.0 - ($semNum * 7.0)), 1);
+                $tVal = $wStats->t_val ? round((float)$wStats->t_val, 1) : round(max(38.0, 65.0 - ($semNum * 7.0)), 1);
 
-                $oerW = (clone $wQuery)->where('PedidoTieneError', 'S')->count();
+                $oerW = (int) ($wStats->oer_count ?? 0);
                 $peorW = $toW > 0 ? round(($oerW / $toW) * 100, 1) : round(max(1.0, 3.2 - ($semNum * 0.5)), 1);
 
                 $seriePode[] = $pVal;
@@ -2083,13 +2115,20 @@ class DashboardService
             $deltaPode = round(end($seriePode) - $refPode, 1);
             $deltaTbpp = round(end($serieTbpp) - $refTbpp, 1);
 
-            // 5. Pérdida de Pedidos (4 etapas balanceadas: entrada, salida, perdidos, motivos)
-            $qF = DB::table('Pedido')
+            // 5. Pérdida de Pedidos (Consulta única agregada)
+            $funnelStats = DB::table('Pedido')
                 ->where('PedidoEliminado', 'N')
-                ->whereBetween('PedidoFechaCreacion', [$inicio, $fin]);
-            if ($canalId) $qF->where('Pedido_canal_pedidoId', $canalId);
+                ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+                ->when($canalId, fn($q) => $q->where('Pedido_canal_pedidoId', $canalId))
+                ->selectRaw("
+                    COUNT(*) as total,
+                    SUM(CASE WHEN \"PedidoEstado_pedido\" = 'A' AND (\"PedidoEstadoDespacho\" IS NULL OR \"PedidoEstadoDespacho\" = 'PENDIENTE') THEN 1 ELSE 0 END) as p_val_perd,
+                    SUM(CASE WHEN \"PedidoEstado_pedido\" = 'A' AND \"PedidoEstadoDespacho\" = 'PREPARACION' THEN 1 ELSE 0 END) as p_prep_perd,
+                    SUM(CASE WHEN \"PedidoEstado_pedido\" = 'A' AND \"PedidoEstadoDespacho\" = 'RECHAZADO' THEN 1 ELSE 0 END) as p_desp_perd
+                ")
+                ->first();
 
-            $totIngresados = (clone $qF)->count();
+            $totIngresados = (int) ($funnelStats->total ?? 0);
             if ($totIngresados === 0) {
                 // Fallback para visualización limpia
                 $totIngresados = 45;
@@ -2097,11 +2136,9 @@ class DashboardService
                 $pPrepPerd = 1;
                 $pDespPerd = 2;
             } else {
-                $pValidacionPerd = (clone $qF)->where('PedidoEstado_pedido', 'A')->where(function($q) {
-                    $q->whereNull('PedidoEstadoDespacho')->orWhere('PedidoEstadoDespacho', 'PENDIENTE');
-                })->count();
-                $pPrepPerd = (clone $qF)->where('PedidoEstado_pedido', 'A')->where('PedidoEstadoDespacho', 'PREPARACION')->count();
-                $pDespPerd = (clone $qF)->where('PedidoEstado_pedido', 'A')->where('PedidoEstadoDespacho', 'RECHAZADO')->count();
+                $pValidacionPerd = (int) ($funnelStats->p_val_perd ?? 0);
+                $pPrepPerd = (int) ($funnelStats->p_prep_perd ?? 0);
+                $pDespPerd = (int) ($funnelStats->p_desp_perd ?? 0);
             }
 
             // Asegurar coherencia matemática de la cascada
@@ -2388,25 +2425,28 @@ class DashboardService
      */
     public function getFichaObservacion(int $indicadorId, string $rango = '7_dias', ?string $canalId = null): array
     {
-        $numDias = match ($rango) {
-            'hoy', '1_dia', '1' => 1,
-            '30_dias', '30' => 30,
-            default => 7,
-        };
+        $cacheKey = "dashboard:ficha_obs:{$indicadorId}:{$rango}:{$canalId}";
+        return Cache::remember($cacheKey, 300, function () use ($indicadorId, $rango, $canalId) {
+            $numDias = match ($rango) {
+                'hoy', '1_dia', '1' => 1,
+                '30_dias', '30' => 30,
+                default => 7,
+            };
 
-        $diasList = [];
-        for ($i = 0; $i < $numDias; $i++) {
-            $f = now()->subDays($numDias - 1 - $i)->format('Y-m-d');
-            $diasList[] = $f;
-        }
+            $diasList = [];
+            for ($i = 0; $i < $numDias; $i++) {
+                $f = now()->subDays($numDias - 1 - $i)->format('Y-m-d');
+                $diasList[] = $f;
+            }
 
-        return match ($indicadorId) {
-            1 => $this->buildFichaPODE($diasList, $canalId, $rango),
-            2 => $this->buildFichaPEOR($diasList, $canalId, $rango),
-            3 => $this->buildFichaPRS($diasList, $canalId, $rango),
-            4 => $this->buildFichaTBPP($diasList, $canalId, $rango),
-            default => throw new \InvalidArgumentException("Indicador ID {$indicadorId} no reconocido."),
-        };
+            return match ($indicadorId) {
+                1 => $this->buildFichaPODE($diasList, $canalId, $rango),
+                2 => $this->buildFichaPEOR($diasList, $canalId, $rango),
+                3 => $this->buildFichaPRS($diasList, $canalId, $rango),
+                4 => $this->buildFichaTBPP($diasList, $canalId, $rango),
+                default => throw new \InvalidArgumentException("Indicador ID {$indicadorId} no reconocido."),
+            };
+        });
     }
 
     private function buildFichaPODE(array $diasList, ?string $canalId, string $rango): array
@@ -2772,8 +2812,10 @@ class DashboardService
             default     => 'PODE',
         };
 
-        $fInicio = Carbon::parse($fecha)->startOfDay();
-        $fFin = Carbon::parse($fecha)->endOfDay();
+        $cacheKey = "dashboard:ficha_diaria:{$fecha}:{$indicadorKey}:{$canalId}";
+        return Cache::remember($cacheKey, 300, function () use ($fecha, $indicadorKey, $canalId) {
+            $fInicio = Carbon::parse($fecha)->startOfDay();
+            $fFin = Carbon::parse($fecha)->endOfDay();
 
         $query = DB::table('Pedido as p')
             ->leftJoin(DB::raw('(SELECT pedido_id, COUNT(*) as cant_roturas, MAX(observaciones) as obs_rotura FROM detalle_rotura_stock GROUP BY pedido_id) as r'), 'p.PedidoId', '=', 'r.pedido_id')
@@ -2970,6 +3012,7 @@ class DashboardService
                 'estado' => $tiempoPromedioMin <= 3.0 ? 'ÓPTIMO' : ($tiempoPromedioMin <= 5.0 ? 'ALERTA' : 'CRÍTICO'),
             ],
         ];
+        });
     }
 
     /**
@@ -2977,8 +3020,10 @@ class DashboardService
      */
     public function getReporteConsolidado(string $tipo = 'semanal', ?int $anio = null, ?string $canalId = null): array
     {
-        $anio = $anio ?: (int)date('Y');
-        $tipo = strtolower($tipo) === 'mensual' ? 'mensual' : 'semanal';
+        $cacheKey = "dashboard:consolidado:{$tipo}:{$anio}:{$canalId}";
+        return Cache::remember($cacheKey, 600, function () use ($tipo, $anio, $canalId) {
+            $anio = $anio ?: (int)date('Y');
+            $tipo = strtolower($tipo) === 'mensual' ? 'mensual' : 'semanal';
 
         if (empty($canalId)) {
             $vista = $tipo === 'mensual' ? 'v_indicadores_mensuales' : 'v_indicadores_semanales';
@@ -3102,6 +3147,7 @@ class DashboardService
                 'promedio_roturas_pedido' => $promedioRoturasGeneral,
             ],
         ];
+        });
     }
 
     /**
@@ -3109,8 +3155,10 @@ class DashboardService
      */
     public function getDetalleDiarioPorSemana(int $anio, int $semana, ?string $canalId = null): array
     {
-        $inicioSemana = Carbon::now()->setISODate($anio, $semana)->startOfWeek()->format('Y-m-d 00:00:00');
-        $finSemana = Carbon::now()->setISODate($anio, $semana)->endOfWeek()->format('Y-m-d 23:59:59');
+        $cacheKey = "dashboard:detalle_semana:{$anio}:{$semana}:{$canalId}";
+        return Cache::remember($cacheKey, 600, function () use ($anio, $semana, $canalId) {
+            $inicioSemana = Carbon::now()->setISODate($anio, $semana)->startOfWeek()->format('Y-m-d 00:00:00');
+            $finSemana = Carbon::now()->setISODate($anio, $semana)->endOfWeek()->format('Y-m-d 23:59:59');
 
         if (empty($canalId)) {
             $diasRaw = DB::table('v_indicadores_diarios')
@@ -3224,6 +3272,7 @@ class DashboardService
             'dias' => $diasFormateados,
             'totales_semana' => $totalesSemana,
         ];
+        });
     }
 
     /**
@@ -3231,19 +3280,51 @@ class DashboardService
      */
     public function getSemanasDelAnio(int $anio): array
     {
-        $inicioAnio = "{$anio}-01-01";
-        $finAnio = "{$anio}-12-31";
+        $cacheKey = "dashboard:semanas_anio:{$anio}";
+        return Cache::remember($cacheKey, 3600, function () use ($anio) {
+            $inicioAnio = "{$anio}-01-01";
+            $finAnio = "{$anio}-12-31";
 
-        $semanas = DB::table('v_indicadores_diarios')
-            ->select(DB::raw('DISTINCT CAST(EXTRACT(WEEK FROM fecha) AS INTEGER) as semana'))
-            ->whereBetween('fecha', [$inicioAnio, $finAnio])
-            ->orderBy('semana', 'asc')
-            ->pluck('semana')
-            ->map(fn($s) => (int)$s)
-            ->values()
-            ->toArray();
+            return DB::table('v_indicadores_diarios')
+                ->select(DB::raw('DISTINCT CAST(EXTRACT(WEEK FROM fecha) AS INTEGER) as semana'))
+                ->whereBetween('fecha', [$inicioAnio, $finAnio])
+                ->orderBy('semana', 'asc')
+                ->pluck('semana')
+                ->map(fn($s) => (int)$s)
+                ->values()
+                ->toArray();
+        });
+    }
 
-        return $semanas;
+    /**
+     * Purga completa y controlada de cachés del Dashboard.
+     */
+    public function flushDashboardCache(): void
+    {
+        try {
+            $mesActual = now()->format('Y-m');
+            $mesAnterior = now()->subMonth()->format('Y-m');
+            $semanaActual = now()->format('Y-\WW');
+            $semanaAnterior = now()->subWeek()->format('Y-\WW');
+
+            Cache::forget("dashboard:pode:{$mesActual}");
+            Cache::forget("dashboard:pode:{$mesAnterior}");
+            Cache::forget("dashboard:peor:{$mesActual}");
+            Cache::forget("dashboard:peor:{$mesAnterior}");
+            Cache::forget("dashboard:prs:{$semanaActual}");
+            Cache::forget("dashboard:prs:{$semanaAnterior}");
+            Cache::forget("dashboard:tbpp:{$mesActual}");
+            Cache::forget("dashboard:tbpp:{$mesAnterior}");
+
+            foreach ([1, 7, 15, 30] as $d) {
+                Cache::forget("dashboard:ejecutivo:dias_{$d}:c_:z_");
+                foreach (['CNL-00001', 'CNL-00002', 'CNL-00003', 'CNL-00004'] as $c) {
+                    Cache::forget("dashboard:ejecutivo:dias_{$d}:c_{$c}:z_");
+                }
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("flushDashboardCache: {$e->getMessage()}");
+        }
     }
 }
 

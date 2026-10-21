@@ -17,6 +17,10 @@ class DashboardController extends Controller
     public function indicators(Request $request): JsonResponse
     {
         try {
+            if ($request->boolean('force') || $request->boolean('refresh')) {
+                $this->service->flushDashboardCache();
+            }
+
             $mes     = $request->query('mes');
             $semana  = $request->query('semana');
             $periodo = $request->query('periodo', $mes);
@@ -51,6 +55,10 @@ class DashboardController extends Controller
     public function ejecutivo(Request $request): JsonResponse
     {
         try {
+            if ($request->boolean('force') || $request->boolean('refresh')) {
+                $this->service->flushDashboardCache();
+            }
+
             $filters = [
                 'dias'     => $request->query('dias', 7),
                 'canal_id' => $request->query('canal_id'),
