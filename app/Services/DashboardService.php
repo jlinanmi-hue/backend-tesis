@@ -706,33 +706,44 @@ class DashboardService
                 ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
                 ->count();
 
-            // IRS_fatal = Incidentes de Rotura Fatal (Pedidos anulados por falta de stock total)
+            // IRS_fatal = Incidentes de Rotura: pedidos con faltante confirmado o anulados por falta de stock
             $IRS_fatal = DB::table('Pedido')
                 ->where('PedidoEliminado', 'N')
-                ->where('PedidoMotivoAnulacion', 'FALTA_STOCK')
                 ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+                ->where(function ($q) {
+                    $q->where('PedidoTieneFaltante', 'S')
+                      ->orWhere('PedidoEstadoDespacho', 'RECHAZADO_ROTURA')
+                      ->orWhere('PedidoMotivoAnulacion', 'FALTA_STOCK');
+                })
                 ->count();
 
             $IRS_amortiguado = 0;
             $IRS_total = $IRS_fatal;
 
-            // Verificar si hay registros explícitos en detalle_rotura_stock (tipo_rotura = CONFIRMADA)
-            $confirmadasCount = DB::table('detalle_rotura_stock')
-                ->where('tipo_rotura', 'CONFIRMADA')
-                ->whereBetween('fecha_hora', [$inicio, $fin])
+            // Incluir pedidos adicionales con registros explícitos en detalle_rotura_stock o auditoria_roturas_stock
+            $pedidosConRoturaAudit = DB::table('Pedido')
+                ->where('PedidoEliminado', 'N')
+                ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+                ->where(function ($q) use ($inicio, $fin) {
+                    $q->whereIn('PedidoId', function ($sub) use ($inicio, $fin) {
+                        $sub->select('pedido_id')
+                            ->from('detalle_rotura_stock')
+                            ->where('tipo_rotura', 'CONFIRMADA')
+                            ->whereNotNull('pedido_id')
+                            ->whereBetween('fecha_hora', [$inicio, $fin]);
+                    })
+                    ->orWhereIn('PedidoId', function ($sub) use ($inicio, $fin) {
+                        $sub->select('pedido_id')
+                            ->from('auditoria_roturas_stock')
+                            ->where('tipo_rotura', 'VENTA_PERDIDA')
+                            ->whereNotNull('pedido_id')
+                            ->whereBetween('created_at', [$inicio, $fin]);
+                    });
+                })
                 ->count();
 
-            // Verificar si hay registros explícitos en auditoria_roturas_stock
-            $auditFatal = DB::table('auditoria_roturas_stock')
-                ->where('tipo_rotura', 'VENTA_PERDIDA')
-                ->whereBetween('created_at', [$inicio, $fin])
-                ->count();
-
-            $maxRoturas = max($confirmadasCount, $auditFatal);
-            if ($maxRoturas > 0) {
-                $IRS_fatal = max($IRS_fatal, $maxRoturas);
-                $IRS_total = $IRS_fatal;
-            }
+            $IRS_fatal = max($IRS_fatal, $pedidosConRoturaAudit);
+            $IRS_total = $IRS_fatal;
 
             $PRS_total = $TR > 0 ? round(($IRS_total / $TR) * 100, 2) : 0;
             $PRS_fatal = $PRS_total;
@@ -748,8 +759,12 @@ class DashboardService
                 ->count();
             $IRS_fatal_prev = DB::table('Pedido')
                 ->where('PedidoEliminado', 'N')
-                ->where('PedidoMotivoAnulacion', 'FALTA_STOCK')
                 ->whereBetween('PedidoFechaCreacion', [$inicioPrev, $finPrev])
+                ->where(function ($q) {
+                    $q->where('PedidoTieneFaltante', 'S')
+                      ->orWhere('PedidoEstadoDespacho', 'RECHAZADO_ROTURA')
+                      ->orWhere('PedidoMotivoAnulacion', 'FALTA_STOCK');
+                })
                 ->count();
             $IRS_total_prev = $IRS_fatal_prev;
             $PRS_prev = $TR_prev > 0 ? round(($IRS_total_prev / $TR_prev) * 100, 2) : 0;
@@ -2028,7 +2043,7 @@ class DashboardService
                     COUNT(*) as total,
                     SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN COALESCE(\"PedidoTotal\", 0) ELSE 0 END) as monto_facturado,
                     COUNT(DISTINCT \"Pedido_ClienteId\") as clientes_count,
-                    AVG(COALESCE(\"PedidoTiempoEfectivoSeg\", 42.0)) as tiempo_medio,
+                    AVG(NULLIF(\"PedidoTiempoRegistroSeg\", 0)) as tiempo_medio,
                     SUM(CASE WHEN \"PedidoOrigenIA\" = 'S' THEN 1 ELSE 0 END) as pedidos_ia
                 ")
                 ->first();
@@ -2036,7 +2051,7 @@ class DashboardService
             $pedidosHoyCount = (int) ($hoyStats->total ?? 0);
             $montoFacturadoHoy = (float) ($hoyStats->monto_facturado ?? 0);
             $clientesHoyCount = (int) ($hoyStats->clientes_count ?? 0);
-            $tiempoMedioHoy = round((float) ($hoyStats->tiempo_medio ?? 42.0), 2);
+            $tiempoMedioHoy = round((float) ($hoyStats->tiempo_medio ?? 0.0), 2);
             $pedidosIaCount = (int) ($hoyStats->pedidos_ia ?? 0);
             $pctIaHoy = $pedidosHoyCount > 0 ? round(($pedidosIaCount / $pedidosHoyCount) * 100, 2) : 0.0;
 
@@ -2052,17 +2067,35 @@ class DashboardService
                     $pedidosHoyCount = max(1, (int) round($totP / max(1, $dias)));
                     $montoFacturadoHoy = round(((float) (clone $qPeriodo)->where('PedidoEstado_pedido', 'C')->sum('PedidoTotal')) / max(1, $dias), 2);
                     $clientesHoyCount = max(1, (int) round(((clone $qPeriodo)->distinct('Pedido_ClienteId')->count('Pedido_ClienteId')) / max(1, $dias)));
-                    $tiempoMedioHoy = round((float) ((clone $qPeriodo)->avg('PedidoTiempoEfectivoSeg') ?: 42.0), 2);
+                    $tiempoMedioHoy = round((float) ((clone $qPeriodo)->avg('PedidoTiempoRegistroSeg') ?: 0.0), 2);
                     $totIa = (clone $qPeriodo)->where('PedidoOrigenIA', 'S')->count();
                     $pctIaHoy = round(($totIa / $totP) * 100, 2);
                 } else {
-                    $pedidosHoyCount = 14;
-                    $montoFacturadoHoy = 3420.50;
-                    $clientesHoyCount = 11;
-                    $tiempoMedioHoy = 42.0;
-                    $pctIaHoy = 68.4;
+                    // Sin actividad en el período ni hoy — mostrar ceros reales
+                    $pedidosHoyCount = 0;
+                    $montoFacturadoHoy = 0.0;
+                    $clientesHoyCount = 0;
+                    $tiempoMedioHoy = 0.0;
+                    $pctIaHoy = 0.0;
                 }
             }
+
+            // SLA cumplimiento: % de pedidos completados dentro del tiempo límite de $timeoutHours horas
+            $slaTimeoutHours = (float) config('orders.timeout_hours', env('ORDER_TIMEOUT_HOURS', 12));
+            $slaPeriodo = DB::table('Pedido')
+                ->where('PedidoEliminado', 'N')
+                ->where('PedidoEstado_pedido', 'C')
+                ->whereNotNull('PedidoFechaDespacho')
+                ->whereBetween('PedidoFechaCreacion', [$inicio, $fin])
+                ->when($canalId, fn($q) => $q->where('Pedido_canal_pedidoId', $canalId))
+                ->selectRaw("
+                    COUNT(*) as total_completados,
+                    SUM(CASE WHEN EXTRACT(EPOCH FROM (\"PedidoFechaDespacho\" - \"PedidoFechaCreacion\")) <= ? THEN 1 ELSE 0 END) as dentro_sla
+                ", [$slaTimeoutHours * 3600])
+                ->first();
+            $slaCumplimiento = ($slaPeriodo && $slaPeriodo->total_completados > 0)
+                ? round(($slaPeriodo->dentro_sla / $slaPeriodo->total_completados) * 100, 1)
+                : 100.0;
 
             $alertasStock = DB::table('Producto')
                 ->where('ProductoEliminado', 'N')
@@ -2089,25 +2122,41 @@ class DashboardService
                     ->selectRaw("
                         COUNT(*) as to_count,
                         SUM(CASE WHEN \"PedidoEstado_pedido\" = 'C' THEN 1 ELSE 0 END) as ode_count,
-                        AVG(COALESCE(\"PedidoTiempoEfectivoSeg\", 42.0)) as t_val,
+                        AVG(NULLIF(\"PedidoTiempoRegistroSeg\", 0)) as t_val,
                         SUM(CASE WHEN \"PedidoTieneError\" = 'S' THEN 1 ELSE 0 END) as oer_count
                     ")
                     ->first();
 
                 $toW = (int) ($wStats->to_count ?? 0);
                 $odeW = (int) ($wStats->ode_count ?? 0);
-                $pVal = $toW > 0 ? round(($odeW / $toW) * 100, 1) : round(88.0 + ($semNum * 2.4), 1);
+                $pVal = $toW > 0 ? round(($odeW / $toW) * 100, 1) : 0.0;
                 $pVal = min(100.0, max(0.0, $pVal));
 
-                $tVal = $wStats->t_val ? round((float)$wStats->t_val, 1) : round(max(38.0, 65.0 - ($semNum * 7.0)), 1);
+                $tVal = $wStats->t_val ? round((float)$wStats->t_val, 1) : 0.0;
 
                 $oerW = (int) ($wStats->oer_count ?? 0);
-                $peorW = $toW > 0 ? round(($oerW / $toW) * 100, 1) : round(max(1.0, 3.2 - ($semNum * 0.5)), 1);
+                $peorW = $toW > 0 ? round(($oerW / $toW) * 100, 1) : 0.0;
+
+                // PRS semanal: pedidos con faltante o anulados por falta de stock en la semana
+                $prsW = 0.0;
+                if ($toW > 0) {
+                    $irs_w = DB::table('Pedido')
+                        ->where('PedidoEliminado', 'N')
+                        ->whereBetween('PedidoFechaCreacion', [$wStart, $wEnd])
+                        ->where(function ($q) {
+                            $q->where('PedidoTieneFaltante', 'S')
+                              ->orWhere('PedidoEstadoDespacho', 'RECHAZADO_ROTURA')
+                              ->orWhere('PedidoMotivoAnulacion', 'FALTA_STOCK');
+                        })
+                        ->when($canalId, fn($q) => $q->where('Pedido_canal_pedidoId', $canalId))
+                        ->count();
+                    $prsW = round(($irs_w / $toW) * 100, 1);
+                }
 
                 $seriePode[] = $pVal;
                 $serieTbpp[] = $tVal;
                 $seriePeor[] = $peorW;
-                $seriePrs[]  = 2.0;
+                $seriePrs[]  = $prsW;
             }
 
             $refPode = $seriePode[0];
@@ -2130,11 +2179,10 @@ class DashboardService
 
             $totIngresados = (int) ($funnelStats->total ?? 0);
             if ($totIngresados === 0) {
-                // Fallback para visualización limpia
-                $totIngresados = 45;
-                $pValidacionPerd = 2;
-                $pPrepPerd = 1;
-                $pDespPerd = 2;
+                // Sin pedidos en el período — funnel vacío con ceros reales
+                $pValidacionPerd = 0;
+                $pPrepPerd = 0;
+                $pDespPerd = 0;
             } else {
                 $pValidacionPerd = (int) ($funnelStats->p_val_perd ?? 0);
                 $pPrepPerd = (int) ($funnelStats->p_prep_perd ?? 0);
@@ -2269,21 +2317,8 @@ class DashboardService
                 ];
             }
 
-            // Fallback con ejemplos representativos si hay pocos fallos registrados
-            $fallbackCausas = [
-                ['motivo' => 'Rechazo voluntario del cliente', 'cantidad' => 3, 'monto_riesgo' => 642.50],
-                ['motivo' => 'Quiebre de stock físico en almacén', 'cantidad' => 1, 'monto_riesgo' => 180.00],
-                ['motivo' => 'Error en dirección de entrega', 'cantidad' => 1, 'monto_riesgo' => 120.00],
-            ];
-            while (count($topCausas) < 3) {
-                $fb = $fallbackCausas[count($topCausas)];
-                $topCausas[] = [
-                    'puesto'       => count($topCausas) + 1,
-                    'motivo'       => $fb['motivo'],
-                    'cantidad'     => $fb['cantidad'],
-                    'monto_riesgo' => $fb['monto_riesgo'],
-                ];
-            }
+            // Sin fallback con datos inventados: si no hay causas registradas, el array queda vacío
+            // (el frontend debe manejar el estado vacío con un mensaje "Sin incidencias en el período")
 
             // 8. Pedidos Por Atender (Solo órdenes pendientes que superaron el SLA de 12h o estén expiradas)
             $timeoutHours = (float) config('orders.timeout_hours', env('ORDER_TIMEOUT_HOURS', 12));
@@ -2373,7 +2408,7 @@ class DashboardService
                     'tiempo_medio_seg'   => $tiempoMedioHoy,
                     'porcentaje_ia'      => $pctIaHoy,
                     'alertas_activas'    => $alertasStock,
-                    'sla_cumplimiento'   => 100.0,
+                    'sla_cumplimiento'   => $slaCumplimiento,
                 ],
                 'evolucion_semanal' => [
                     'semanas' => $semanasLabels,
@@ -2559,17 +2594,29 @@ class DashboardService
             }
             $TR = $qTR->count();
 
+            $pedidosConRoturaDia = DB::table('Pedido')
+                ->where('PedidoEliminado', 'N')
+                ->whereBetween('PedidoFechaCreacion', [$fInicio, $fFin])
+                ->where(function ($q) use ($fInicio, $fFin) {
+                    $q->where('PedidoTieneFaltante', 'S')
+                      ->orWhere('PedidoEstadoDespacho', 'RECHAZADO_ROTURA')
+                      ->orWhere('PedidoMotivoAnulacion', 'FALTA_STOCK')
+                      ->orWhereIn('PedidoId', function ($sub) use ($fInicio, $fFin) {
+                          $sub->select('pedido_id')
+                              ->from('detalle_rotura_stock')
+                              ->where('tipo_rotura', 'CONFIRMADA')
+                              ->whereNotNull('pedido_id')
+                              ->whereBetween('fecha_hora', [$fInicio, $fFin]);
+                      });
+                })
+                ->when(!empty($canalId), fn($q) => $q->where('Pedido_canal_pedidoId', $canalId))
+                ->count();
+
+            $IRS = $pedidosConRoturaDia;
+
             $roturasRows = DB::table('detalle_rotura_stock')
                 ->whereBetween('fecha_hora', [$fInicio, $fFin])
                 ->get();
-
-            $anuladosFaltaStock = DB::table('Pedido')
-                ->where('PedidoEliminado', 'N')
-                ->where('PedidoMotivoAnulacion', 'FALTA_STOCK')
-                ->whereBetween('PedidoFechaCreacion', [$fInicio, $fFin])
-                ->count();
-
-            $IRS = max($roturasRows->count(), $anuladosFaltaStock);
 
             $totalTR += $TR;
             $totalIRS += $IRS;
