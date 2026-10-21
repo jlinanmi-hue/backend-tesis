@@ -124,7 +124,9 @@ PROMPT;
             'total_detectados'  => count($itemsMatched),
             'tokens_consumidos' => $aiRes['tokens'] ?? 258,
             'tiempo_ms'         => $tiempoMs,
-            'model'             => $aiRes['model'] ?? 'vision-ai',
+            'model'             => $aiRes['model'] ?? 'gemini-flash-lite-latest',
+            'proveedor'         => !empty($geminiError) ? 'openai_fallback' : 'gemini',
+            'es_salvavidas_gpt' => !empty($geminiError),
         ];
     }
 

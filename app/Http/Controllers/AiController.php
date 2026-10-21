@@ -108,23 +108,20 @@ PROMPT;
     ) {}
 
     /**
-     * Obtiene el motor de IA activo (Google Gemini o OpenAI GPT-5.5).
+     * Obtiene el motor de IA activo para Chatbot (Texto) y Audio.
+     * Prioridad por defecto: OpenAI GPT-5.5 / Whisper-1.
      */
     protected function getAiService(): GeminiService|OpenAiService
     {
-        $provider = config('services.ai.provider', env('AI_PROVIDER', 'gemini'));
-        $geminiKey = config('services.gemini.api_key');
+        $provider = config('services.ai.provider', env('AI_PROVIDER', 'openai'));
         $openAiKey = config('services.openai.api_key');
-
-        if ($provider === 'gemini' && !empty($geminiKey)) {
-            return $this->geminiService;
-        }
+        $geminiKey = config('services.gemini.api_key');
 
         if ($provider === 'openai' && !empty($openAiKey)) {
             return $this->openAiService;
         }
 
-        if (!empty($geminiKey)) {
+        if ($provider === 'gemini' && !empty($geminiKey)) {
             return $this->geminiService;
         }
 
