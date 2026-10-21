@@ -24,6 +24,7 @@ use App\Http\Controllers\RolesSeguridadController;
 use App\Http\Controllers\RoturaStockController;
 use App\Http\Controllers\SunatController;
 use App\Http\Controllers\UnidadesMedidaController;
+use App\Http\Controllers\VisionController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -233,6 +234,12 @@ Route::prefix('ai')->group(function () {
     Route::get('/health', [AiController::class, 'health'])->middleware('throttle:10,1');
     Route::post('/feedback', [AiController::class, 'recordFeedback']);
     Route::get('/feedback/stats', [AiController::class, 'feedbackStats']);
+});
+
+// 10.1 Rutas de Visión Multimodal con IA (Valencia Vision)
+Route::prefix('vision')->group(function () {
+    Route::post('/procesar-pedido', [VisionController::class, 'procesarPedido'])->middleware('throttle:10,1');
+    Route::post('/auditar-resultado', [VisionController::class, 'auditarResultado']);
 });
 
 // 11. Rutas del Módulo de Ubicaciones de Almacén (producto_ubi)

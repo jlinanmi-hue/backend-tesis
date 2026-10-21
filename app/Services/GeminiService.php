@@ -1179,5 +1179,83 @@ PROMPT;
 
         return $fallback;
     }
+
+    /**
+     * Procesar imagen multimodal con Gemini Vision forzando respuesta JSON estructurada.
+     *
+     * @param string $base64Image Imagen en base64
+     * @param string $mimeType Formato MIME (image/jpeg, image/webp, image/png)
+     * @param string $prompt Instrucción o prompt para la IA
+     * @param array|null $jsonSchema Esquema JSON opcional para forzar estructura
+     * @param string|null $systemInstruction
+     * @return array
+     * @throws Exception
+     */
+    public function analyzeImage(
+        string $base64Image,
+        string $mimeType,
+        string $prompt,
+        ?array $jsonSchema = null,
+        ?string $systemInstruction = null
+    ): array {
+        // Limpiar cualquier prefijo data:image/... si existiera
+        if (str_contains($base64Image, ';base64,')) {
+            $base64Image = explode(';base64,', $base64Image)[1];
+        }
+
+        $parts = [
+            ['text' => $prompt],
+            [
+                'inline_data' => [
+                    'mime_type' => $mimeType,
+                    'data'      => trim($base64Image),
+                ],
+            ],
+        ];
+
+        $contents = [
+            [
+                'role'  => 'user',
+                'parts' => $parts,
+            ],
+        ];
+
+        $generationConfig = [
+            'responseMimeType' => 'application/json',
+            'temperature'      => 0.1, // Respuesta determinista y precisa
+        ];
+
+        if (!empty($jsonSchema)) {
+            $generationConfig['responseSchema'] = $jsonSchema;
+        }
+
+        $res = $this->generateContent(
+            contents: $contents,
+            systemInstruction: $systemInstruction ?? 'Eres un experto extractor de datos logísticos y comerciales para Comercial Valencia. Devuelve exclusivamente JSON válido.',
+            tools: [],
+            generationConfig: $generationConfig,
+            customTimeout: 30
+        );
+
+        $text = trim($res['text'] ?? '');
+        // Eliminar posibles bloques de markdown ```json ... ```
+        if (str_starts_with($text, '```json')) {
+            $text = preg_replace('/^```json\s*/i', '', $text);
+            $text = preg_replace('/\s*```$/', '', $text);
+        } elseif (str_starts_with($text, '```')) {
+            $text = preg_replace('/^```\s*/i', '', $text);
+            $text = preg_replace('/\s*```$/', '', $text);
+        }
+
+        $decoded = json_decode($text, true);
+
+        return [
+            'success'   => is_array($decoded),
+            'data'      => $decoded ?? [],
+            'raw_text'  => $text,
+            'tokens'    => $res['usage']['totalTokenCount'] ?? 258,
+            'model'     => $res['model_version'] ?? 'gemini-vision',
+        ];
+    }
 }
 

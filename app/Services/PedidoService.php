@@ -444,6 +444,25 @@ class PedidoService
 
         $this->invalidarCacheDashboard();
 
+        // Auditoría automática de Visión IA si el pedido provino de escaneo de foto
+        if (!empty($datos['token_auditoria'])) {
+            try {
+                $tiempoRevision = isset($datos['tiempo_revision_humana_seg']) 
+                    ? (int) $datos['tiempo_revision_humana_seg'] 
+                    : ($datos['tiempo_registro_segundos'] ?? null);
+
+                app(\App\Services\VisionExtractorService::class)->auditarPedidoGuardado(
+                    tokenAuditoria: (string) $datos['token_auditoria'],
+                    pedidoId: $pedido->PedidoId,
+                    itemsGuardadosFinales: $datos['detalles'] ?? [],
+                    usuarioId: $datos['usuario_id'] ?? $pedido->PedidoUsuarioRegistro,
+                    tiempoRevisionSeg: $tiempoRevision ? (int) $tiempoRevision : null
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Error al auto-auditar visión IA en Pedido {$pedido->PedidoId}: " . $e->getMessage());
+            }
+        }
+
         return $pedido;
     }
 
@@ -828,6 +847,25 @@ class PedidoService
         });
 
         $this->invalidarCacheDashboard();
+
+        // Auditoría automática de Visión IA si el pedido provino de escaneo de foto
+        if (!empty($datos['token_auditoria'])) {
+            try {
+                $tiempoRevision = isset($datos['tiempo_revision_humana_seg']) 
+                    ? (int) $datos['tiempo_revision_humana_seg'] 
+                    : ($datos['tiempo_registro_segundos'] ?? null);
+
+                app(\App\Services\VisionExtractorService::class)->auditarPedidoGuardado(
+                    tokenAuditoria: (string) $datos['token_auditoria'],
+                    pedidoId: $pedido->PedidoId,
+                    itemsGuardadosFinales: $datos['detalles'] ?? [],
+                    usuarioId: $datos['usuario_id'] ?? $pedido->PedidoUsuarioRegistro,
+                    tiempoRevisionSeg: $tiempoRevision ? (int) $tiempoRevision : null
+                );
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Error al auto-auditar visión IA en Pedido {$pedido->PedidoId}: " . $e->getMessage());
+            }
+        }
 
         return $pedido;
     }
