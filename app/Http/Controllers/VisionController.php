@@ -31,10 +31,23 @@ class VisionController extends Controller
                 $base64 = base64_encode(file_get_contents($file->getRealPath()));
                 $mime = $file->getMimeType() ?: 'image/jpeg';
             }
-            // Opción 2: Base64 directo en JSON
-            elseif ($request->filled('imagen_base64')) {
-                $base64 = $request->input('imagen_base64');
-                $mime = $request->input('mime_type', 'image/jpeg');
+            // Opción 2: Base64 directo en JSON (soporta imagen_base64, base64 o image)
+            elseif ($request->filled('imagen_base64') || $request->filled('base64') || $request->filled('image')) {
+                $base64 = $request->input('imagen_base64') ?? $request->input('base64') ?? $request->input('image');
+                $mime = $request->input('mime_type');
+
+                // Si viene como Data URL (data:image/webp;base64,...), limpiar y deducir MIME
+                if (is_string($base64) && str_contains($base64, ';base64,')) {
+                    $partes = explode(';base64,', $base64);
+                    if (empty($mime) && preg_match('#^data:(image/[a-zA-Z0-9.+-]+)#', $partes[0], $coincidencias)) {
+                        $mime = $coincidencias[1];
+                    }
+                    $base64 = $partes[1];
+                }
+
+                if (empty($mime)) {
+                    $mime = 'image/jpeg';
+                }
             } else {
                 return response()->json([
                     'success' => false,
