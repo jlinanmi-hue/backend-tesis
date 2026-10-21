@@ -8,6 +8,7 @@ use App\Http\Controllers\CategoriaProductoController;
 use App\Http\Controllers\ChatWhatsAppController;
 use App\Http\Controllers\ClienteController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\DashboardAIController;
 use App\Http\Controllers\DeliveryController;
 use App\Http\Controllers\DespachoController;
 use App\Http\Controllers\EmpresaController;
@@ -53,6 +54,7 @@ Route::prefix('dashboard')->group(function () {
     Route::get('/reporte-consolidado', [DashboardController::class, 'reporteConsolidado']);
     Route::get('/detalle-diario-semana', [DashboardController::class, 'detalleDiarioPorSemana']);
     Route::get('/semanas-del-anio', [DashboardController::class, 'semanasDelAnio']);
+    Route::post('/ia-explicar', [DashboardAIController::class, 'explicarPeriodo']);
 });
 
 // 2. Rutas del Módulo de Gestión de Personal / Usuarios
