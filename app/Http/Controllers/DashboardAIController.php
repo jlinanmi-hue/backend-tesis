@@ -34,7 +34,7 @@ class DashboardAIController extends Controller
 
         if (Cache::has($cacheKey)) {
             $cached = Cache::get($cacheKey);
-            return response()->json([
+            $cachePayload = [
                 'success'         => true,
                 'analisis'        => $cached['analisis'],
                 'tiempo_segundos' => 0.04,
@@ -42,8 +42,12 @@ class DashboardAIController extends Controller
                 'motor_usado'     => $cached['motor_usado'] ?? 'cache',
                 'es_cache'        => true,
                 'en_mantenimiento'=> false,
-                'message'         => 'Interpretación recuperada de caché optimizada.',
-            ], 200);
+            ];
+
+            return response()->json(array_merge($cachePayload, [
+                'data'    => $cachePayload,
+                'message' => 'Interpretación recuperada de caché optimizada.',
+            ]), 200);
         }
 
         $start = microtime(true);
@@ -96,7 +100,7 @@ class DashboardAIController extends Controller
 
         // 3. BLINDAJE CONTRA ERRORES 500 (ZERO CRASH EN SUSTENTACIÓN)
         if (empty($analisisTexto)) {
-            return response()->json([
+            $mantenimientoPayload = [
                 'success'          => false,
                 'analisis'         => null,
                 'tiempo_segundos'  => $duracionSegundos,
@@ -105,7 +109,11 @@ class DashboardAIController extends Controller
                 'es_cache'         => false,
                 'en_mantenimiento' => true,
                 'mensaje_amigable' => 'El servicio de interpretación predictiva con IA se encuentra temporalmente en mantenimiento preventivo. Los indicadores operativos y gráficos continúan registrando datos con normalidad.',
-            ], 200);
+            ];
+
+            return response()->json(array_merge($mantenimientoPayload, [
+                'data' => $mantenimientoPayload,
+            ]), 200);
         }
 
         // Guardar en caché 30 minutos
@@ -114,7 +122,7 @@ class DashboardAIController extends Controller
             'motor_usado' => $motorUsado,
         ], 1800);
 
-        return response()->json([
+        $successPayload = [
             'success'         => true,
             'analisis'        => $analisisTexto,
             'tiempo_segundos' => $duracionSegundos,
@@ -122,8 +130,12 @@ class DashboardAIController extends Controller
             'motor_usado'     => $motorUsado,
             'es_cache'        => false,
             'en_mantenimiento'=> false,
-            'message'         => 'Análisis ejecutivo generado con éxito.',
-        ], 200);
+        ];
+
+        return response()->json(array_merge($successPayload, [
+            'data'    => $successPayload,
+            'message' => 'Análisis ejecutivo generado con éxito.',
+        ]), 200);
     }
 
     /**
