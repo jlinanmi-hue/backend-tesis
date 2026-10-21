@@ -108,23 +108,13 @@ PROMPT;
     ) {}
 
     /**
-     * Obtiene el motor de IA activo para Chatbot (Texto) y Audio.
-     * Prioridad por defecto: OpenAI GPT-5.5 / Whisper-1.
+     * Motor de IA para Chatbot (Texto) y Audio (Voz).
+     * El Chatbot y Audio son consumidos directamente por OpenAI (GPT-5.5 / Whisper-1).
+     * Las imágenes son atendidas por VisionExtractorService con Gemini Flash como motor principal.
      */
     protected function getAiService(): GeminiService|OpenAiService
     {
-        $provider = config('services.ai.provider', env('AI_PROVIDER', 'openai'));
         $openAiKey = config('services.openai.api_key');
-        $geminiKey = config('services.gemini.api_key');
-
-        if ($provider === 'openai' && !empty($openAiKey)) {
-            return $this->openAiService;
-        }
-
-        if ($provider === 'gemini' && !empty($geminiKey)) {
-            return $this->geminiService;
-        }
-
         if (!empty($openAiKey)) {
             return $this->openAiService;
         }
