@@ -360,6 +360,10 @@ class DespachoService
                 $cantFaltante   = max(0.0, $cantSolicitada - $cantDespachada);
                 $tieneFaltante  = $cantFaltante > 0;
                 $factor         = (float) ($itemOriginal->factor_conversion ?: 1.0);
+                $cantDespachadaBase = round($cantDespachada * $factor, 2);
+                $cantFaltanteBase   = round($cantFaltante * $factor, 2);
+                $cantSolicitadaBase = round($cantSolicitada * $factor, 2);
+                $subtotalDespachado = round($cantDespachada * (float) $itemOriginal->precio_unitario, 2);
 
                 // Estado del ítem
                 $estadoItem = 'VERIFICADO_OK';
@@ -369,10 +373,14 @@ class DespachoService
                     $estadoItem = 'CON_FALTANTE';
                 }
 
-                // Actualizar detalle del pedido
+                // Actualizar detalle del pedido con las cantidades reales despachadas y facturadas
                 DB::table('Detalle_Pedido_Productos')
                     ->where('Detalle_Pedido_ProductosId', $detalleId)
                     ->update([
+                        'Detalle_Pedido_Productos_cantidad'             => $cantDespachada,
+                        'Detalle_Pedido_Productos_cantidad_base'        => $cantDespachadaBase,
+                        'Detalle_Pedido_Productos_cantidad_fisica'      => $cantDespachadaBase,
+                        'Detalle_Pedido_Productos_subtotal'             => $subtotalDespachado,
                         'Detalle_Pedido_Productos_cantidad_despachada'  => $cantDespachada,
                         'Detalle_Pedido_Productos_estado_item_despacho' => $estadoItem,
                         'Detalle_Pedido_Productos_observacion_item'     => $obsItem,
@@ -383,9 +391,6 @@ class DespachoService
                 // Si hay faltante: registrar rotura en detalle_rotura_stock
                 if ($tieneFaltante) {
                     $hayFaltante = true;
-                    $cantFaltanteBase = round($cantFaltante * $factor, 2);
-                    $cantSolicitadaBase = round($cantSolicitada * $factor, 2);
-                    $cantDespachadaBase = round($cantDespachada * $factor, 2);
 
                     $this->roturaStockService->confirmarRotura([
                         'pedido_id'                   => $pedidoId,
@@ -406,19 +411,63 @@ class DespachoService
                     }
                 }
 
-                $totalDespachado += $cantDespachada * (float) $itemOriginal->precio_unitario;
+                // Sincronizar movimiento de Kárdex para reflejar la salida REAL ejecutada
+                if ($itemOriginal->producto_id) {
+                    $nuevoSaldo = (float) DB::table('Producto')
+                        ->where('ProductoId', $itemOriginal->producto_id)
+                        ->value('ProductoStockActual');
+
+                    if ($cantDespachadaBase > 0) {
+                        DB::table('Movimiento_producto')
+                            ->where('Movimiento_productoDocumentoOperacionId', $pedidoId)
+                            ->where('Movimiento_producto_ProductoId', $itemOriginal->producto_id)
+                            ->where('Movimiento_productoTipoMovimiento', 'S')
+                            ->update([
+                                'Movimiento_productoCantidadPresentacion' => (string) $cantDespachada,
+                                'Movimiento_productoCantidadSalida'       => (string) $cantDespachadaBase,
+                                'Movimiento_productoCantidadSaldo'        => (string) $nuevoSaldo,
+                                'Movimiento_productoFechaModificacion'    => now(),
+                                'Movimiento_productoUsuarioModificacion'  => $usuario,
+                            ]);
+                    } else {
+                        // Si no se despachó nada de este ítem (0 unidades), anular la salida del kárdex
+                        DB::table('Movimiento_producto')
+                            ->where('Movimiento_productoDocumentoOperacionId', $pedidoId)
+                            ->where('Movimiento_producto_ProductoId', $itemOriginal->producto_id)
+                            ->where('Movimiento_productoTipoMovimiento', 'S')
+                            ->update([
+                                'Movimiento_productoEliminado'            => 'S',
+                                'Movimiento_productoCantidadSalida'       => '0.00',
+                                'Movimiento_productoCantidadPresentacion' => '0',
+                                'Movimiento_productoCantidadSaldo'        => (string) $nuevoSaldo,
+                                'Movimiento_productoFechaEliminacion'     => now(),
+                                'Movimiento_productoUsuarioEliminacion'   => $usuario,
+                            ]);
+                    }
+                }
+
+                $totalDespachado += $subtotalDespachado;
             }
+
+            $subtotalFinal = round($totalDespachado, 2);
+            $igvFinal      = round($subtotalFinal * 0.18, 2);
+            $flete         = (float) ($pedido->PedidoCostoDelivery ?? 0);
+            $totalFinal    = round($subtotalFinal + $igvFinal + $flete, 2);
 
             // Cerrar pedido: PODE = 1 (cliente aceptó), PRS = 1
             DB::table('Pedido')->where('PedidoId', $pedidoId)->update([
+                'PedidoTotal'               => $totalFinal,
+                'PedidoIgv'                 => $igvFinal,
+                'PedidoTotalDespachado'     => $subtotalFinal,
                 'PedidoEstadoDespacho'      => 'ENTREGADO_CON_FALTANTE',
                 'PedidoEstado_pedido'       => 'C',   // Completado = PODE 1
                 'PedidoTieneFaltante'       => $hayFaltante ? 'S' : 'N',
-                'PedidoTotalDespachado'     => round($totalDespachado, 2),
                 'PedidoFechaFinDespacho'    => now(),
                 'PedidoFechaDespacho'       => now(),
                 'PedidoCerradoPor'          => $usuario,
                 'PedidoObservacionDespacho' => $observacionGeneral,
+                'PedidoFechaModificacion'   => now(),
+                'PedidoUsuarioModificacion' => $usuario,
             ]);
 
             Log::info("DespachoService: Despacho CON_FALTANTE — Pedido {$pedidoId} por {$usuario}. Total despachado: {$totalDespachado}");
@@ -477,6 +526,24 @@ class DespachoService
                     DB::table('Producto')
                         ->where('ProductoId', $item->producto_id)
                         ->increment('ProductoStockActual', $cantBase);
+                }
+
+                // Anular salida en Kárdex ya que el pedido fue rechazado por el cliente
+                if ($item->producto_id) {
+                    $nuevoSaldo = (float) DB::table('Producto')
+                        ->where('ProductoId', $item->producto_id)
+                        ->value('ProductoStockActual');
+
+                    DB::table('Movimiento_producto')
+                        ->where('Movimiento_productoDocumentoOperacionId', $pedidoId)
+                        ->where('Movimiento_producto_ProductoId', $item->producto_id)
+                        ->where('Movimiento_productoTipoMovimiento', 'S')
+                        ->update([
+                            'Movimiento_productoEliminado'          => 'S',
+                            'Movimiento_productoCantidadSaldo'      => (string) $nuevoSaldo,
+                            'Movimiento_productoFechaEliminacion'   => now(),
+                            'Movimiento_productoUsuarioEliminacion' => $usuario,
+                        ]);
                 }
 
                 // Actualizar detalle

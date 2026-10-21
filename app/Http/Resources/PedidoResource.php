@@ -11,10 +11,13 @@ class PedidoResource extends JsonResource
     public function toArray(Request $request): array
     {
         $estado = strtoupper(trim($this->PedidoEstado_pedido ?? 'P'));
+        $estadoDespacho = strtoupper(trim((string)($this->PedidoEstadoDespacho ?? '')));
+        $tieneFaltante = ($this->PedidoTieneFaltante === 'S' || $estadoDespacho === 'ENTREGADO_CON_FALTANTE');
+
         $estadoTexto = match ($estado) {
             'P' => 'Pendiente',
-            'C' => 'Completada',
-            'A' => 'Cancelada / Anulada',
+            'C' => $tieneFaltante ? 'Entregado con Faltante' : 'Completada',
+            'A' => ($estadoDespacho === 'RECHAZADO_ROTURA') ? 'Rechazado por Rotura' : 'Cancelada / Anulada',
             default => 'Desconocido',
         };
 
@@ -63,6 +66,10 @@ class PedidoResource extends JsonResource
             'usuario_creador' => AuditHelper::resolverNombreUsuario($this->PedidoUsuarioCreacion ?? $this->PedidoUsuarioRegistro),
             'estado' => $estado,
             'estado_texto' => $estadoTexto,
+            'estado_despacho' => $this->PedidoEstadoDespacho,
+            'tiene_faltante' => $tieneFaltante,
+            'total_despachado' => (float) ($this->PedidoTotalDespachado ?? $this->PedidoTotal),
+            'observacion_despacho' => $this->PedidoObservacionDespacho,
             'origen_ia' => ($this->PedidoOrigenIA === 'S'),
             'origen_texto' => ($this->PedidoOrigenIA === 'S') ? 'Valencia AI' : 'Manual',
             'tiene_error' => ($this->PedidoTieneError === 'S'),
