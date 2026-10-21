@@ -23,6 +23,15 @@ class DashboardAIController extends Controller
      */
     public function explicarPeriodo(Request $request): JsonResponse
     {
+        // Sanear BOM UTF-8 si viniera en el cuerpo crudo de la petición
+        $raw = $request->getContent();
+        if (is_string($raw) && str_starts_with($raw, "\xEF\xBB\xBF")) {
+            $decoded = json_decode(substr($raw, 3), true);
+            if (is_array($decoded)) {
+                $request->merge($decoded);
+            }
+        }
+
         $kpisActuales    = $request->input('kpis_actuales', []);
         $kpisAnteriores  = $request->input('kpis_anteriores', []);
         $periodo         = (string) $request->input('periodo', 'Últimos 7 días');
