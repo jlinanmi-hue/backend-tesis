@@ -1,4 +1,4 @@
-FROM php:8.4-cli-alpine
+FROM php:8.5.12-cli-alpine
 
 # Instalar extensiones necesarias para Laravel, DomPDF y PostgreSQL
 RUN apk add --no-cache \
